@@ -1,4 +1,10 @@
-import { memo, useEffect, useState, type MutableRefObject } from "react";
+import {
+  memo,
+  useEffect,
+  useState,
+  type MutableRefObject,
+  type ReactNode,
+} from "react";
 import { Brain, Globe2, Lightbulb, Loader2, Paperclip, Send, Square, X } from "../../components/icons";
 
 import {
@@ -34,6 +40,20 @@ const REASONING_I18N_KEYS: Record<ReasoningLevel, string> = {
   high: "settings.reasoning.high",
   xhigh: "settings.reasoning.xhigh",
 };
+
+function RuntimeControlTooltip(props: { label: string; children: ReactNode }) {
+  return (
+    <span className="group/runtime-tooltip relative inline-flex shrink-0">
+      {props.children}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md border border-border/60 bg-popover px-2 py-1 text-[11px] font-medium text-popover-foreground opacity-0 shadow-md transition-opacity duration-150 group-focus-within/runtime-tooltip:opacity-100 group-hover/runtime-tooltip:opacity-100"
+      >
+        {props.label}
+      </span>
+    </span>
+  );
+}
 
 export const ChatComposerBar = memo(function ChatComposerBar(props: {
   composerRef: MutableRefObject<MentionComposerHandle | null>;
@@ -87,6 +107,11 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: {
   const selectedReasoning = reasoningOptions.includes(chatRuntimeControls.reasoning)
     ? chatRuntimeControls.reasoning
     : DEFAULT_CHAT_RUNTIME_CONTROLS.reasoning;
+  const uploadTooltip = t("chat.upload.button");
+  const thinkingTooltip = !thinkingSupported
+    ? t("chat.runtime.thinkingUnavailable")
+    : t("chat.runtime.thinkingTooltip");
+  const webSearchTooltip = t("chat.runtime.webSearchTooltip");
 
   useEffect(() => {
     if (
@@ -171,112 +196,97 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: {
 
           <div className="relative flex items-center justify-between gap-2 px-3 pb-2 pt-1">
             <div className="flex min-w-0 items-center gap-1">
-              <button
-                type="button"
-                disabled={uploadDisabled}
-                onClick={onPickReadableFiles}
-                title={
-                  isUploadingFiles
-                    ? t("chat.upload.uploading")
-                    : !isAgentMode
-                    ? t("chat.upload.onlyInTools")
-                    : !workdir
-                      ? t("chat.upload.requireWorkdir")
-                      : t("chat.upload.selectFiles")
-                }
-                aria-label={
-                  isUploadingFiles
-                    ? t("chat.upload.uploading")
-                    : !isAgentMode
-                    ? t("chat.upload.onlyInTools")
-                    : !workdir
-                      ? t("chat.upload.requireWorkdir")
-                      : t("chat.upload.selectFiles")
-                }
-                className={cn(
-                  "composer-toolbar-action relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
-                  "disabled:pointer-events-none disabled:opacity-40",
-                  pendingUploadedFiles.length > 0
-                    ? "text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
-                    : "text-muted-foreground hover:text-foreground dark:hover:text-white",
-                )}
-              >
-                {isUploadingFiles ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Paperclip className="h-4 w-4" />
-                )}
-                {pendingUploadedFiles.length > 0 ? (
-                  <span
-                    aria-hidden
-                    className="absolute -right-0.5 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-sky-500 px-[3px] text-[9px] font-semibold leading-none text-white shadow-[0_0_0_1.5px_rgba(255,255,255,0.95)] dark:bg-sky-400 dark:text-slate-900 dark:shadow-[0_0_0_1.5px_rgba(20,22,28,0.9)]"
-                  >
-                    {pendingUploadedFiles.length}
-                  </span>
-                ) : null}
-              </button>
+              <RuntimeControlTooltip label={uploadTooltip}>
+                <button
+                  type="button"
+                  disabled={uploadDisabled}
+                  onClick={onPickReadableFiles}
+                  aria-label={
+                    isUploadingFiles
+                      ? t("chat.upload.uploading")
+                      : !isAgentMode
+                      ? t("chat.upload.onlyInTools")
+                      : !workdir
+                        ? t("chat.upload.requireWorkdir")
+                        : t("chat.upload.selectFiles")
+                  }
+                  className={cn(
+                    "composer-toolbar-action relative inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
+                    "disabled:pointer-events-none disabled:opacity-40",
+                    pendingUploadedFiles.length > 0
+                      ? "text-sky-600 hover:text-sky-700 dark:text-sky-300 dark:hover:text-sky-200"
+                      : "text-muted-foreground hover:text-foreground dark:hover:text-white",
+                  )}
+                >
+                  {isUploadingFiles ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Paperclip className="h-4 w-4" />
+                  )}
+                  {pendingUploadedFiles.length > 0 ? (
+                    <span
+                      aria-hidden
+                      className="absolute -right-0.5 -top-0.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-sky-500 px-[3px] text-[9px] font-semibold leading-none text-white shadow-[0_0_0_1.5px_rgba(255,255,255,0.95)] dark:bg-sky-400 dark:text-slate-900 dark:shadow-[0_0_0_1.5px_rgba(20,22,28,0.9)]"
+                    >
+                      {pendingUploadedFiles.length}
+                    </span>
+                  ) : null}
+                </button>
+              </RuntimeControlTooltip>
 
-              <button
-                type="button"
-                disabled={controlsDisabled || !thinkingSupported}
-                onClick={() =>
-                  onChatRuntimeControlsChange({
-                    thinkingEnabled: !chatRuntimeControls.thinkingEnabled,
-                  })
-                }
-                title={
-                  !thinkingSupported
-                    ? t("chat.runtime.thinkingUnavailable")
-                    : chatRuntimeControls.thinkingEnabled
-                      ? t("chat.runtime.thinkingOn")
-                      : t("chat.runtime.thinkingOff")
-                }
-                aria-label={
-                  !thinkingSupported
-                    ? t("chat.runtime.thinkingUnavailable")
-                    : chatRuntimeControls.thinkingEnabled
-                      ? t("chat.runtime.thinkingOn")
-                      : t("chat.runtime.thinkingOff")
-                }
-                className={cn(
-                  "composer-toolbar-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
-                  "disabled:pointer-events-none disabled:opacity-40",
-                  chatRuntimeControls.thinkingEnabled && thinkingSupported
-                    ? "text-amber-600 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-200"
-                    : "text-muted-foreground hover:text-foreground dark:hover:text-white",
-                )}
-              >
-                <Lightbulb className="h-4 w-4" />
-              </button>
+              <RuntimeControlTooltip label={thinkingTooltip}>
+                <button
+                  type="button"
+                  disabled={controlsDisabled || !thinkingSupported}
+                  onClick={() =>
+                    onChatRuntimeControlsChange({
+                      thinkingEnabled: !chatRuntimeControls.thinkingEnabled,
+                    })
+                  }
+                  aria-label={
+                    !thinkingSupported
+                      ? t("chat.runtime.thinkingUnavailable")
+                      : chatRuntimeControls.thinkingEnabled
+                        ? t("chat.runtime.thinkingOn")
+                        : t("chat.runtime.thinkingOff")
+                  }
+                  className={cn(
+                    "composer-toolbar-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
+                    "disabled:pointer-events-none disabled:opacity-40",
+                    chatRuntimeControls.thinkingEnabled && thinkingSupported
+                      ? "text-amber-600 hover:text-amber-700 dark:text-amber-300 dark:hover:text-amber-200"
+                      : "text-muted-foreground hover:text-foreground dark:hover:text-white",
+                  )}
+                >
+                  <Lightbulb className="h-4 w-4" />
+                </button>
+              </RuntimeControlTooltip>
 
-              <button
-                type="button"
-                disabled={controlsDisabled}
-                onClick={() =>
-                  onChatRuntimeControlsChange({
-                    nativeWebSearchEnabled: !chatRuntimeControls.nativeWebSearchEnabled,
-                  })
-                }
-                title={
-                  chatRuntimeControls.nativeWebSearchEnabled
-                    ? t("chat.runtime.webSearchOn")
-                    : t("chat.runtime.webSearchOff")
-                }
-                aria-label={
-                  chatRuntimeControls.nativeWebSearchEnabled
-                    ? t("chat.runtime.webSearchOn")
-                    : t("chat.runtime.webSearchOff")
-                }
-                className={cn(
-                  "composer-toolbar-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
-                  "disabled:pointer-events-none disabled:opacity-40",
-                  chatRuntimeControls.nativeWebSearchEnabled
-                    ? "text-emerald-600 hover:text-emerald-700 dark:text-emerald-300 dark:hover:text-emerald-200"
-                    : "text-muted-foreground hover:text-foreground dark:hover:text-white",
-                )}
-              >
-                <Globe2 className="h-4 w-4" />
-              </button>
+              <RuntimeControlTooltip label={webSearchTooltip}>
+                <button
+                  type="button"
+                  disabled={controlsDisabled}
+                  onClick={() =>
+                    onChatRuntimeControlsChange({
+                      nativeWebSearchEnabled: !chatRuntimeControls.nativeWebSearchEnabled,
+                    })
+                  }
+                  aria-label={
+                    chatRuntimeControls.nativeWebSearchEnabled
+                      ? t("chat.runtime.webSearchOn")
+                      : t("chat.runtime.webSearchOff")
+                  }
+                  className={cn(
+                    "composer-toolbar-action inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full outline-hidden transition-colors",
+                    "disabled:pointer-events-none disabled:opacity-40",
+                    chatRuntimeControls.nativeWebSearchEnabled
+                      ? "text-emerald-600 hover:text-emerald-700 dark:text-emerald-300 dark:hover:text-emerald-200"
+                      : "text-muted-foreground hover:text-foreground dark:hover:text-white",
+                  )}
+                >
+                  <Globe2 className="h-4 w-4" />
+                </button>
+              </RuntimeControlTooltip>
 
               {reasoningOptions.length > 0 ? (
                 <Select
@@ -293,7 +303,6 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: {
                         ? "border-violet-300/30 bg-violet-50/55 text-foreground hover:border-violet-300/45 hover:bg-violet-50/80 dark:border-violet-300/15 dark:bg-violet-400/[0.07] dark:text-foreground dark:hover:bg-violet-400/[0.13]"
                         : "border-transparent bg-foreground/[0.04] text-muted-foreground hover:bg-foreground/[0.07] dark:bg-white/[0.04] dark:hover:bg-white/[0.08]",
                     )}
-                    title={t("chat.runtime.reasoning")}
                     aria-label={t("chat.runtime.reasoning")}
                   >
                     <span className="flex min-w-0 items-center gap-1">

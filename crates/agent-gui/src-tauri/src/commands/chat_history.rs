@@ -276,9 +276,6 @@ fn initialize_db(conn: &Connection) -> Result<(), String> {
             pinned_at INTEGER
         );
 
-        CREATE INDEX IF NOT EXISTS idx_chatHistory_updated_at
-            ON chatHistory(updated_at DESC);
-
         CREATE TABLE IF NOT EXISTS chatHistorySegment (
             conversation_id TEXT NOT NULL,
             segment_index INTEGER NOT NULL,
@@ -295,9 +292,6 @@ fn initialize_db(conn: &Connection) -> Result<(), String> {
             FOREIGN KEY (conversation_id) REFERENCES chatHistory(id) ON DELETE CASCADE
         );
 
-        CREATE INDEX IF NOT EXISTS idx_chatHistorySegment_conversation_updated
-            ON chatHistorySegment(conversation_id, updated_at DESC);
-
         CREATE TABLE IF NOT EXISTS chatHistoryShare (
             conversation_id TEXT PRIMARY KEY,
             token TEXT UNIQUE,
@@ -311,10 +305,15 @@ fn initialize_db(conn: &Connection) -> Result<(), String> {
     )
     .map_err(|e| format!("初始化聊天历史表失败：{e}"))?;
 
-    ensure_chat_history_pinned_columns(conn)?;
+    ensure_chat_history_columns(conn)?;
+    ensure_chat_history_segment_columns(conn)?;
     ensure_chat_history_share_columns(conn)?;
     conn.execute_batch(
         "
+        CREATE INDEX IF NOT EXISTS idx_chatHistory_updated_at
+            ON chatHistory(updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_chatHistorySegment_conversation_updated
+            ON chatHistorySegment(conversation_id, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_chatHistory_pinned
             ON chatHistory(is_pinned DESC, pinned_at DESC, updated_at DESC);
         CREATE INDEX IF NOT EXISTS idx_chatHistoryShare_token
@@ -327,50 +326,263 @@ fn initialize_db(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn ensure_chat_history_pinned_columns(conn: &Connection) -> Result<(), String> {
+fn read_table_columns(
+    conn: &Connection,
+    table_name: &str,
+    table_label: &str,
+) -> Result<HashSet<String>, String> {
     let mut stmt = conn
-        .prepare("PRAGMA table_info(chatHistory)")
-        .map_err(|e| format!("读取聊天历史表结构失败：{e}"))?;
+        .prepare(&format!("PRAGMA table_info({table_name})"))
+        .map_err(|e| format!("读取{table_label}结构失败：{e}"))?;
     let rows = stmt
         .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| format!("查询聊天历史表结构失败：{e}"))?;
+        .map_err(|e| format!("查询{table_label}结构失败：{e}"))?;
     let mut columns = HashSet::new();
     for row in rows {
-        columns.insert(row.map_err(|e| format!("读取聊天历史表字段失败：{e}"))?);
+        columns.insert(row.map_err(|e| format!("读取{table_label}字段失败：{e}"))?);
     }
+    Ok(columns)
+}
 
-    if !columns.contains("is_pinned") {
-        conn.execute_batch(
-            "ALTER TABLE chatHistory ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;",
-        )
-        .map_err(|e| format!("迁移聊天历史置顶字段失败：{e}"))?;
-    }
-    if !columns.contains("pinned_at") {
-        conn.execute_batch("ALTER TABLE chatHistory ADD COLUMN pinned_at INTEGER;")
-            .map_err(|e| format!("迁移聊天历史置顶时间字段失败：{e}"))?;
+fn ensure_table_columns(
+    conn: &Connection,
+    table_name: &str,
+    table_label: &str,
+    migrations: &[(&str, &str)],
+) -> Result<(), String> {
+    let columns = read_table_columns(conn, table_name, table_label)?;
+
+    for (column, ddl) in migrations {
+        if !columns.contains(*column) {
+            conn.execute_batch(ddl)
+                .map_err(|e| format!("迁移{table_label}字段 {column} 失败：{e}"))?;
+        }
     }
 
     Ok(())
 }
 
-fn ensure_chat_history_share_columns(conn: &Connection) -> Result<(), String> {
-    let mut stmt = conn
-        .prepare("PRAGMA table_info(chatHistoryShare)")
-        .map_err(|e| format!("读取聊天历史分享表结构失败：{e}"))?;
-    let rows = stmt
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|e| format!("查询聊天历史分享表结构失败：{e}"))?;
-    let mut columns = HashSet::new();
-    for row in rows {
-        columns.insert(row.map_err(|e| format!("读取聊天历史分享表字段失败：{e}"))?);
-    }
+fn ensure_chat_history_columns(conn: &Connection) -> Result<(), String> {
+    ensure_table_columns(
+        conn,
+        "chatHistory",
+        "聊天历史主表",
+        &[
+            (
+                "title",
+                "ALTER TABLE chatHistory ADD COLUMN title TEXT NOT NULL DEFAULT 'Untitled';",
+            ),
+            (
+                "provider_id",
+                "ALTER TABLE chatHistory ADD COLUMN provider_id TEXT NOT NULL DEFAULT '';",
+            ),
+            (
+                "model",
+                "ALTER TABLE chatHistory ADD COLUMN model TEXT NOT NULL DEFAULT '';",
+            ),
+            (
+                "session_id",
+                "ALTER TABLE chatHistory ADD COLUMN session_id TEXT;",
+            ),
+            ("cwd", "ALTER TABLE chatHistory ADD COLUMN cwd TEXT;"),
+            (
+                "context_meta_json",
+                "ALTER TABLE chatHistory ADD COLUMN context_meta_json TEXT NOT NULL DEFAULT '{}';",
+            ),
+            (
+                "active_segment_index",
+                "ALTER TABLE chatHistory ADD COLUMN active_segment_index INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "total_segment_count",
+                "ALTER TABLE chatHistory ADD COLUMN total_segment_count INTEGER NOT NULL DEFAULT 1;",
+            ),
+            (
+                "total_message_count",
+                "ALTER TABLE chatHistory ADD COLUMN total_message_count INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "created_at",
+                "ALTER TABLE chatHistory ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "updated_at",
+                "ALTER TABLE chatHistory ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "is_pinned",
+                "ALTER TABLE chatHistory ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "pinned_at",
+                "ALTER TABLE chatHistory ADD COLUMN pinned_at INTEGER;",
+            ),
+        ],
+    )?;
 
-    if !columns.contains("redact_tool_content") {
-        conn.execute_batch(
-            "ALTER TABLE chatHistoryShare ADD COLUMN redact_tool_content INTEGER NOT NULL DEFAULT 0;",
-        )
-        .map_err(|e| format!("迁移聊天历史分享脱敏字段失败：{e}"))?;
-    }
+    conn.execute_batch(
+        "
+        UPDATE chatHistory
+        SET title = 'Untitled'
+        WHERE title IS NULL OR trim(title) = '';
+
+        UPDATE chatHistory
+        SET provider_id = ''
+        WHERE provider_id IS NULL;
+
+        UPDATE chatHistory
+        SET model = ''
+        WHERE model IS NULL;
+
+        UPDATE chatHistory
+        SET context_meta_json = '{}'
+        WHERE context_meta_json IS NULL OR trim(context_meta_json) = '';
+
+        UPDATE chatHistory
+        SET active_segment_index = 0
+        WHERE active_segment_index IS NULL OR active_segment_index < 0;
+
+        UPDATE chatHistory
+        SET total_segment_count = 1
+        WHERE total_segment_count IS NULL OR total_segment_count < 1;
+
+        UPDATE chatHistory
+        SET total_message_count = 0
+        WHERE total_message_count IS NULL OR total_message_count < 0;
+
+        UPDATE chatHistory
+        SET created_at = 0
+        WHERE created_at IS NULL;
+
+        UPDATE chatHistory
+        SET updated_at = created_at
+        WHERE updated_at IS NULL;
+
+        UPDATE chatHistory
+        SET is_pinned = 0
+        WHERE is_pinned IS NULL;
+        ",
+    )
+    .map_err(|e| format!("修复聊天历史主表默认字段失败：{e}"))?;
+
+    Ok(())
+}
+
+fn ensure_chat_history_segment_columns(conn: &Connection) -> Result<(), String> {
+    ensure_table_columns(
+        conn,
+        "chatHistorySegment",
+        "聊天历史分段表",
+        &[
+            (
+                "segment_id",
+                "ALTER TABLE chatHistorySegment ADD COLUMN segment_id TEXT NOT NULL DEFAULT '';",
+            ),
+            (
+                "summary_json",
+                "ALTER TABLE chatHistorySegment ADD COLUMN summary_json TEXT;",
+            ),
+            (
+                "messages_json",
+                "ALTER TABLE chatHistorySegment ADD COLUMN messages_json TEXT NOT NULL DEFAULT '[]';",
+            ),
+            (
+                "message_count",
+                "ALTER TABLE chatHistorySegment ADD COLUMN message_count INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "start_message_id",
+                "ALTER TABLE chatHistorySegment ADD COLUMN start_message_id TEXT;",
+            ),
+            (
+                "end_message_id",
+                "ALTER TABLE chatHistorySegment ADD COLUMN end_message_id TEXT;",
+            ),
+            (
+                "created_at",
+                "ALTER TABLE chatHistorySegment ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "updated_at",
+                "ALTER TABLE chatHistorySegment ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+        ],
+    )?;
+
+    conn.execute_batch(
+        "
+        UPDATE chatHistorySegment
+        SET segment_id = 'segment-' || segment_index
+        WHERE segment_id IS NULL OR trim(segment_id) = '';
+
+        UPDATE chatHistorySegment
+        SET messages_json = '[]'
+        WHERE messages_json IS NULL OR trim(messages_json) = '';
+
+        UPDATE chatHistorySegment
+        SET message_count = 0
+        WHERE message_count IS NULL OR message_count < 0;
+
+        UPDATE chatHistorySegment
+        SET created_at = 0
+        WHERE created_at IS NULL;
+
+        UPDATE chatHistorySegment
+        SET updated_at = created_at
+        WHERE updated_at IS NULL;
+        ",
+    )
+    .map_err(|e| format!("修复聊天历史分段表默认字段失败：{e}"))?;
+
+    Ok(())
+}
+
+fn ensure_chat_history_share_columns(conn: &Connection) -> Result<(), String> {
+    ensure_table_columns(
+        conn,
+        "chatHistoryShare",
+        "聊天历史分享表",
+        &[
+            ("token", "ALTER TABLE chatHistoryShare ADD COLUMN token TEXT;"),
+            (
+                "enabled",
+                "ALTER TABLE chatHistoryShare ADD COLUMN enabled INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "redact_tool_content",
+                "ALTER TABLE chatHistoryShare ADD COLUMN redact_tool_content INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "created_at",
+                "ALTER TABLE chatHistoryShare ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "updated_at",
+                "ALTER TABLE chatHistoryShare ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+        ],
+    )?;
+
+    conn.execute_batch(
+        "
+        UPDATE chatHistoryShare
+        SET enabled = 0
+        WHERE enabled IS NULL;
+
+        UPDATE chatHistoryShare
+        SET redact_tool_content = 0
+        WHERE redact_tool_content IS NULL;
+
+        UPDATE chatHistoryShare
+        SET created_at = 0
+        WHERE created_at IS NULL;
+
+        UPDATE chatHistoryShare
+        SET updated_at = created_at
+        WHERE updated_at IS NULL;
+        ",
+    )
+    .map_err(|e| format!("修复聊天历史分享表默认字段失败：{e}"))?;
 
     Ok(())
 }
@@ -413,19 +625,43 @@ fn ensure_chat_history_fts(conn: &Connection) -> Result<(), String> {
             conversation_updated_at INTEGER NOT NULL,
             PRIMARY KEY (conversation_id, segment_index)
         );
+        "#,
+    )
+    .map_err(|e| format!("初始化聊天历史 FTS 表失败：{e}"))?;
 
+    ensure_chat_history_fts_index_columns(conn)?;
+    conn.execute_batch(
+        "
         CREATE INDEX IF NOT EXISTS idx_chatHistoryFtsSegmentIndex_segment_updated
             ON chatHistoryFtsSegmentIndex(segment_updated_at DESC);
 
         CREATE INDEX IF NOT EXISTS idx_chatHistoryFtsSegmentIndex_conversation_updated
             ON chatHistoryFtsSegmentIndex(conversation_updated_at DESC);
-        "#,
+        ",
     )
-    .map_err(|e| format!("初始化聊天历史 FTS 表失败：{e}"))?;
+    .map_err(|e| format!("初始化聊天历史 FTS 索引失败：{e}"))?;
 
     seed_existing_chat_history_fts_index(conn)?;
 
     Ok(())
+}
+
+fn ensure_chat_history_fts_index_columns(conn: &Connection) -> Result<(), String> {
+    ensure_table_columns(
+        conn,
+        "chatHistoryFtsSegmentIndex",
+        "聊天历史 FTS 元数据表",
+        &[
+            (
+                "segment_updated_at",
+                "ALTER TABLE chatHistoryFtsSegmentIndex ADD COLUMN segment_updated_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+            (
+                "conversation_updated_at",
+                "ALTER TABLE chatHistoryFtsSegmentIndex ADD COLUMN conversation_updated_at INTEGER NOT NULL DEFAULT 0;",
+            ),
+        ],
+    )
 }
 
 fn seed_existing_chat_history_fts_index(conn: &Connection) -> Result<(), String> {
@@ -3298,6 +3534,20 @@ mod tests {
         }
     }
 
+    fn table_column_names(conn: &Connection, table_name: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .expect("prepare table info query");
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .expect("query table info");
+        let mut columns = rows
+            .map(|row| row.expect("read table column name"))
+            .collect::<Vec<_>>();
+        columns.sort();
+        columns
+    }
+
     fn insert_subagent_run_for_test(
         conn: &Connection,
         run_id: &str,
@@ -3418,6 +3668,125 @@ mod tests {
             )
             .expect("query share table");
         assert_eq!(share_table_exists, 1);
+    }
+
+    #[test]
+    fn initialize_db_migrates_legacy_history_columns_for_list_query() {
+        let conn =
+            Connection::open_in_memory().expect("open legacy in-memory chat history database");
+        conn.execute_batch(
+            "
+            CREATE TABLE chatHistory (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                provider_id TEXT NOT NULL,
+                model TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+
+            INSERT INTO chatHistory (
+                id,
+                title,
+                provider_id,
+                model,
+                created_at,
+                updated_at
+            ) VALUES (
+                'legacy-conv',
+                'Legacy Conversation',
+                'codex',
+                'gpt-5',
+                1700000000000,
+                1700000000100
+            );
+            ",
+        )
+        .expect("create legacy chatHistory table");
+
+        initialize_db(&conn).expect("migrate legacy schema");
+
+        let summaries = list_chat_history_sync(&conn).expect("list migrated legacy history");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].id, "legacy-conv");
+        assert_eq!(summaries[0].session_id, None);
+        assert_eq!(summaries[0].cwd, None);
+        assert_eq!(summaries[0].message_count, 0);
+        assert!(!summaries[0].is_pinned);
+
+        let record = get_record_by_id(&conn, "legacy-conv").expect("load migrated record");
+        assert_eq!(record.context_meta_json, "{}");
+        assert_eq!(record.active_segment_index, 0);
+        assert_eq!(record.total_segment_count, 1);
+        assert_eq!(record.total_message_count, 0);
+    }
+
+    #[test]
+    fn migrated_legacy_table_columns_match_fresh_schema() {
+        let fresh = open_test_db().expect("open fresh test db");
+        let legacy =
+            Connection::open_in_memory().expect("open legacy in-memory chat history database");
+        legacy
+            .execute_batch(
+                "
+                CREATE TABLE chatHistory (
+                    id TEXT PRIMARY KEY
+                );
+
+                CREATE TABLE chatHistorySegment (
+                    conversation_id TEXT NOT NULL,
+                    segment_index INTEGER NOT NULL,
+                    PRIMARY KEY (conversation_id, segment_index)
+                );
+
+                CREATE TABLE chatHistoryShare (
+                    conversation_id TEXT PRIMARY KEY
+                );
+
+                CREATE TABLE chatHistoryFtsSegmentIndex (
+                    conversation_id TEXT NOT NULL,
+                    segment_index INTEGER NOT NULL,
+                    PRIMARY KEY (conversation_id, segment_index)
+                );
+
+                INSERT INTO chatHistory (id) VALUES ('legacy-conv');
+                INSERT INTO chatHistorySegment (
+                    conversation_id,
+                    segment_index
+                ) VALUES (
+                    'legacy-conv',
+                    0
+                );
+                INSERT INTO chatHistoryShare (conversation_id) VALUES ('legacy-conv');
+                ",
+            )
+            .expect("create minimal legacy history schema");
+
+        initialize_db(&legacy).expect("migrate minimal legacy schema");
+
+        for table_name in [
+            "chatHistory",
+            "chatHistorySegment",
+            "chatHistoryShare",
+            "chatHistoryFtsSegmentIndex",
+        ] {
+            assert_eq!(
+                table_column_names(&legacy, table_name),
+                table_column_names(&fresh, table_name),
+                "migrated {table_name} columns should match fresh schema"
+            );
+        }
+
+        let summaries = list_chat_history_sync(&legacy).expect("list minimal migrated history");
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].title, "Untitled");
+        assert_eq!(summaries[0].message_count, 0);
+
+        let segments = load_segments(&legacy, "legacy-conv").expect("load minimal segment");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].segment_id, "segment-0");
+        assert_eq!(segments[0].messages_json, "[]");
+        assert_eq!(segments[0].message_count, 0);
     }
 
     #[test]

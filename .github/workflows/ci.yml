@@ -168,6 +168,11 @@ jobs:
           CARGO_TERM_COLOR: always
         run: cargo check --manifest-path crates/agent-gui/src-tauri/Cargo.toml --tests
 
+      - name: Test Tauri history migrations
+        env:
+          CARGO_TERM_COLOR: always
+        run: cargo test --manifest-path crates/agent-gui/src-tauri/Cargo.toml chat_history --lib
+
   whitespace:
     name: Diff Hygiene
     runs-on: ubuntu-latest

@@ -1267,3 +1267,72 @@ func TestWebSocketForwardsHistorySettingsAndFsRPCs(t *testing.T) {
 		t.Fatalf("preview payload = %#v", previewPayload)
 	}
 }
+
+func TestWebSocketDefaultsInvalidHistoryListPagination(t *testing.T) {
+	t.Parallel()
+
+	sm := session.NewManager()
+	sm.RecordAuthentication("desktop-agent", "0.9.0", "session-1")
+	agentSession := session.NewAgentSession(sm.LatestAuthSnapshot())
+	sm.SetSession(agentSession)
+
+	handler := server.NewWebSocketServer(&config.Config{
+		Token:          "ws-token",
+		RequestTimeout: time.Second,
+	}, sm)
+	conn, cleanup := dialGatewayWebSocket(t, handler)
+	defer cleanup()
+
+	authWebSocket(t, conn, "ws-token")
+
+	sendEnvelope(t, conn, "history-defaults", "history.list", map[string]any{
+		"page":      0,
+		"page_size": 0,
+	})
+	historyOutbound := readOutboundEnvelope(t, agentSession)
+	historyReq := historyOutbound.GetHistoryList()
+	if historyReq == nil {
+		t.Fatalf("history outbound payload = %T, want HistoryListRequest", historyOutbound.GetPayload())
+	}
+	if historyReq.GetPage() != 1 || historyReq.GetPageSize() != 80 {
+		t.Fatalf("history list defaults = %#v", historyReq)
+	}
+	sm.DispatchFromAgent(&gatewayv1.AgentEnvelope{
+		RequestId: historyOutbound.GetRequestId(),
+		Timestamp: time.Now().Unix(),
+		Payload: &gatewayv1.AgentEnvelope_HistoryListResp{
+			HistoryListResp: &gatewayv1.HistoryListResponse{},
+		},
+	})
+	historyResponse := receiveEnvelope(t, conn)
+	if historyResponse.ID != "history-defaults" || historyResponse.Type != "response" {
+		t.Fatalf("history response = %#v", historyResponse)
+	}
+
+	sendEnvelope(t, conn, "shared-history-defaults", "history.shared_list", map[string]any{})
+	sharedHistoryOutbound := readOutboundEnvelope(t, agentSession)
+	sharedHistoryReq := sharedHistoryOutbound.GetMemoryManage()
+	if sharedHistoryReq == nil {
+		t.Fatalf("shared history outbound payload = %T, want MemoryManageRequest", sharedHistoryOutbound.GetPayload())
+	}
+	var sharedHistoryArgs map[string]any
+	if err := json.Unmarshal([]byte(sharedHistoryReq.GetArgsJson()), &sharedHistoryArgs); err != nil {
+		t.Fatalf("decode shared history args: %v", err)
+	}
+	if sharedHistoryArgs["page"] != float64(1) || sharedHistoryArgs["page_size"] != float64(80) {
+		t.Fatalf("shared history defaults = %#v", sharedHistoryArgs)
+	}
+	sm.DispatchFromAgent(&gatewayv1.AgentEnvelope{
+		RequestId: sharedHistoryOutbound.GetRequestId(),
+		Timestamp: time.Now().Unix(),
+		Payload: &gatewayv1.AgentEnvelope_MemoryManageResp{
+			MemoryManageResp: &gatewayv1.MemoryManageResponse{
+				ResultJson: `{"total_count":0,"conversations":[]}`,
+			},
+		},
+	})
+	sharedHistoryResponse := receiveEnvelope(t, conn)
+	if sharedHistoryResponse.ID != "shared-history-defaults" || sharedHistoryResponse.Type != "response" {
+		t.Fatalf("shared history response = %#v", sharedHistoryResponse)
+	}
+}

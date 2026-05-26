@@ -720,6 +720,43 @@ test("GatewayWebSocketClient sends history list requests", async () => {
   resetGatewayWebSocketClient();
 });
 
+test("GatewayWebSocketClient defaults invalid history pagination", async () => {
+  installBrowser();
+  const loader = createWebModuleLoader();
+  const { getGatewayWebSocketClient, resetGatewayWebSocketClient } = loader.loadModule("src/lib/gatewaySocket.ts");
+  resetGatewayWebSocketClient();
+
+  const client = getGatewayWebSocketClient("token");
+  const listPromise = client.listHistory(0, 0);
+  const socket = await connectAndAuth();
+  await waitFor(() => socket.sent.length >= 2, "history list envelope");
+  assert.equal(socket.sent[1].type, "history.list");
+  assert.deepEqual(socket.sent[1].payload, { page: 1, page_size: 80 });
+  socket.receive({
+    id: socket.sent[1].id,
+    type: "response",
+    payload: { conversations: [], total_count: 0, running_conversation_ids: [] },
+  });
+  assert.deepEqual(await listPromise, {
+    conversations: [],
+    total_count: 0,
+    running_conversation_ids: [],
+  });
+
+  const sharedListPromise = client.listSharedHistory(Number.NaN, 500);
+  await waitFor(() => socket.sent.length >= 3, "shared history list envelope");
+  assert.equal(socket.sent[2].type, "history.shared_list");
+  assert.deepEqual(socket.sent[2].payload, { page: 1, page_size: 200 });
+  socket.receive({
+    id: socket.sent[2].id,
+    type: "response",
+    payload: { conversations: [], total_count: 0 },
+  });
+  assert.deepEqual(await sharedListPromise, { conversations: [], total_count: 0 });
+
+  resetGatewayWebSocketClient();
+});
+
 test("GatewayWebSocketClient sends history share requests", async () => {
   installBrowser();
   const loader = createWebModuleLoader();

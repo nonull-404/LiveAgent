@@ -219,6 +219,10 @@ type RuntimeHost = {
   clearInterval: typeof clearInterval;
 };
 
+const DEFAULT_HISTORY_LIST_PAGE = 1;
+const DEFAULT_HISTORY_LIST_PAGE_SIZE = 80;
+const MAX_HISTORY_LIST_PAGE_SIZE = 200;
+
 function getRuntimeHost(): RuntimeHost {
   if (typeof window !== "undefined") {
     return window as unknown as RuntimeHost;
@@ -250,6 +254,25 @@ function normalizeAfterSeq(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value > 0
     ? Math.floor(value)
     : 0;
+}
+
+function normalizePositiveInteger(value: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : fallback;
+}
+
+function normalizeHistoryListPage(page: number) {
+  return normalizePositiveInteger(page, DEFAULT_HISTORY_LIST_PAGE);
+}
+
+function normalizeHistoryListPageSize(pageSize: number) {
+  return Math.min(
+    normalizePositiveInteger(pageSize, DEFAULT_HISTORY_LIST_PAGE_SIZE),
+    MAX_HISTORY_LIST_PAGE_SIZE,
+  );
 }
 
 function isRecoverableGatewayTransportError(error: unknown) {
@@ -539,15 +562,15 @@ export class GatewayWebSocketClient {
 
   async listHistory(page: number, pageSize: number): Promise<HistoryList> {
     return this.requestWithRecovery<HistoryList>("history.list", {
-      page,
-      page_size: pageSize,
+      page: normalizeHistoryListPage(page),
+      page_size: normalizeHistoryListPageSize(pageSize),
     });
   }
 
   async listSharedHistory(page: number, pageSize: number): Promise<HistoryList> {
     return this.requestWithRecovery<HistoryList>("history.shared_list", {
-      page,
-      page_size: pageSize,
+      page: normalizeHistoryListPage(page),
+      page_size: normalizeHistoryListPageSize(pageSize),
     });
   }
 
@@ -1805,11 +1828,17 @@ class SharedWorkerGatewayWebSocketClient implements GatewayWebSocketClientLike {
   }
 
   async listHistory(page: number, pageSize: number): Promise<HistoryList> {
-    return this.request<HistoryList>("history.list", { page, page_size: pageSize });
+    return this.request<HistoryList>("history.list", {
+      page: normalizeHistoryListPage(page),
+      page_size: normalizeHistoryListPageSize(pageSize),
+    });
   }
 
   async listSharedHistory(page: number, pageSize: number): Promise<HistoryList> {
-    return this.request<HistoryList>("history.shared_list", { page, page_size: pageSize });
+    return this.request<HistoryList>("history.shared_list", {
+      page: normalizeHistoryListPage(page),
+      page_size: normalizeHistoryListPageSize(pageSize),
+    });
   }
 
   async getHistory(conversationId: string, options?: HistoryGetOptions): Promise<HistoryDetail> {

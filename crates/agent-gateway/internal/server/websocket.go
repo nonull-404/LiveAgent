@@ -85,6 +85,8 @@ type websocketConnection struct {
 
 const recentActiveChatRetention = 5 * time.Second
 const maxHistoryListLimit = 200
+const defaultHistoryListPage = 1
+const defaultHistoryListPageSize = 80
 
 func NewWebSocketServer(cfg *config.Config, sm *session.Manager) http.Handler {
 	server := &websocket.Server{
@@ -500,13 +502,11 @@ func (c *websocketConnection) handleHistoryList(req websocketRequest) {
 	}
 	page := body.Page
 	if page <= 0 {
-		_ = c.writeError(req.ID, "history.list page must be greater than 0")
-		return
+		page = defaultHistoryListPage
 	}
 	pageSize := body.PageSize
 	if pageSize <= 0 {
-		_ = c.writeError(req.ID, "history.list page_size must be greater than 0")
-		return
+		pageSize = defaultHistoryListPageSize
 	} else if pageSize > maxHistoryListLimit {
 		pageSize = maxHistoryListLimit
 	}
@@ -561,13 +561,11 @@ func (c *websocketConnection) handleHistorySharedList(req websocketRequest) {
 	}
 	page := body.Page
 	if page <= 0 {
-		_ = c.writeError(req.ID, "history.shared_list page must be greater than 0")
-		return
+		page = defaultHistoryListPage
 	}
 	pageSize := body.PageSize
 	if pageSize <= 0 {
-		_ = c.writeError(req.ID, "history.shared_list page_size must be greater than 0")
-		return
+		pageSize = defaultHistoryListPageSize
 	} else if pageSize > maxHistoryListLimit {
 		pageSize = maxHistoryListLimit
 	}

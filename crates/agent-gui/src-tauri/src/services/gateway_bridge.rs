@@ -25,6 +25,8 @@ use crate::services::skills::system_manage_skill_sync;
 
 const DEFAULT_FS_LIST_DIRS_MAX_RESULTS: usize = 2000;
 const HARD_FS_LIST_DIRS_MAX_RESULTS: usize = 10000;
+const DEFAULT_HISTORY_LIST_PAGE: i32 = 1;
+const DEFAULT_HISTORY_LIST_PAGE_SIZE: i32 = 80;
 
 #[derive(Debug, Deserialize)]
 struct HistorySharedListArgs {
@@ -91,9 +93,18 @@ pub async fn handle_cron_manage(
 pub async fn handle_history_list(
     request: proto::HistoryListRequest,
 ) -> Result<proto::HistoryListResponse, String> {
+    let page_number = if request.page > 0 {
+        request.page
+    } else {
+        DEFAULT_HISTORY_LIST_PAGE
+    };
+    let page_size = if request.page_size > 0 {
+        request.page_size
+    } else {
+        DEFAULT_HISTORY_LIST_PAGE_SIZE
+    };
     let page =
-        chat_history::chat_history_list(i64::from(request.page), i64::from(request.page_size))
-            .await?;
+        chat_history::chat_history_list(i64::from(page_number), i64::from(page_size)).await?;
     Ok(build_proto_history_list_response(page))
 }
 

@@ -1,6 +1,7 @@
 import type { GatewaySettingsSyncPayload } from "@/lib/settings/sync";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
 import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
+import type { TerminalEvent, TerminalSession, TerminalSnapshot } from "@/lib/terminal/types";
 
 import { GatewayWebSocketClient } from "./gatewaySocket";
 import type {
@@ -74,12 +75,16 @@ type ManagedClient = {
   status: AgentStatus | null;
   statusError: string | null;
   idleTimer: ReturnType<typeof setTimeout> | null;
+  terminalDetachTimers: Map<string, ReturnType<typeof setTimeout>>;
 };
 
 type PortState = {
   connectionID: string;
   client: ManagedClient;
   streams: Map<string, AbortController>;
+  terminalAllProjects: boolean;
+  terminalProjectKeys: Set<string>;
+  terminalSessionIds: Set<string>;
 };
 
 type SharedWorkerScope = {
@@ -88,6 +93,7 @@ type SharedWorkerScope = {
 
 const clients = new Map<string, ManagedClient>();
 const portStates = new Map<MessagePort, PortState>();
+const TERMINAL_DETACH_GRACE_MS = 250;
 
 function asErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message.trim()) {
@@ -119,6 +125,106 @@ function broadcast(client: ManagedClient, payload: Record<string, unknown>) {
   }
 }
 
+function shouldPostTerminalEventToPort(state: PortState, event: TerminalEvent) {
+  const sessionID = event.sessionId.trim();
+  if (event.kind === "output") {
+    return sessionID !== "" && state.terminalSessionIds.has(sessionID);
+  }
+  const projectPathKey = event.projectPathKey.trim();
+  if (sessionID !== "" || projectPathKey !== "") {
+    return true;
+  }
+  if (state.terminalAllProjects) {
+    return true;
+  }
+  return (
+    (sessionID !== "" && state.terminalSessionIds.has(sessionID)) ||
+    (projectPathKey !== "" && state.terminalProjectKeys.has(projectPathKey))
+  );
+}
+
+function terminalDetachKey(sessionID: string, projectPathKey: string) {
+  if (sessionID) {
+    return `session:${sessionID}`;
+  }
+  if (projectPathKey) {
+    return `project:${projectPathKey}`;
+  }
+  return "";
+}
+
+function clearPendingTerminalDetach(client: ManagedClient, sessionID: string, projectPathKey: string) {
+  const key = terminalDetachKey(sessionID, projectPathKey);
+  if (!key) return;
+  const timer = client.terminalDetachTimers.get(key);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    client.terminalDetachTimers.delete(key);
+  }
+}
+
+function hasPortTerminalInterest(client: ManagedClient, sessionID: string, projectPathKey: string) {
+  for (const port of [...client.ports]) {
+    const state = portStates.get(port);
+    if (!state || state.client !== client) {
+      client.ports.delete(port);
+      continue;
+    }
+    if (sessionID && state.terminalSessionIds.has(sessionID)) {
+      return true;
+    }
+    if (!sessionID && projectPathKey) {
+      if (state.terminalAllProjects || state.terminalProjectKeys.has(projectPathKey)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function scheduleTerminalDetach(client: ManagedClient, sessionID: string, projectPathKey: string) {
+  const key = terminalDetachKey(sessionID, projectPathKey);
+  if (!key || hasPortTerminalInterest(client, sessionID, projectPathKey)) {
+    return;
+  }
+  clearPendingTerminalDetach(client, sessionID, projectPathKey);
+  const timer = setTimeout(() => {
+    client.terminalDetachTimers.delete(key);
+    if (hasPortTerminalInterest(client, sessionID, projectPathKey)) {
+      return;
+    }
+    void client.client.detachTerminal(sessionID, projectPathKey).catch(() => undefined);
+  }, TERMINAL_DETACH_GRACE_MS);
+  client.terminalDetachTimers.set(key, timer);
+}
+
+function forgetPortTerminalInterest(state: PortState, sessionID: string, projectPathKey: string) {
+  if (sessionID) {
+    state.terminalSessionIds.delete(sessionID);
+  } else if (projectPathKey) {
+    state.terminalProjectKeys.delete(projectPathKey);
+  }
+}
+
+function broadcastTerminal(client: ManagedClient, event: TerminalEvent) {
+  for (const port of [...client.ports]) {
+    const state = portStates.get(port);
+    if (!state || state.client !== client) {
+      client.ports.delete(port);
+      continue;
+    }
+    if (!shouldPostTerminalEventToPort(state, event)) {
+      continue;
+    }
+    postToPort(port, {
+      type: "event",
+      event_type: "terminal",
+      payload: event,
+      connection_id: state.connectionID,
+    });
+  }
+}
+
 function scheduleManagedClientCleanup(client: ManagedClient) {
   if (client.ports.size > 0 || client.idleTimer !== null) {
     return;
@@ -128,6 +234,10 @@ function scheduleManagedClientCleanup(client: ManagedClient) {
     if (client.ports.size > 0) {
       return;
     }
+    for (const timer of client.terminalDetachTimers.values()) {
+      clearTimeout(timer);
+    }
+    client.terminalDetachTimers.clear();
     client.client.dispose();
     clients.delete(client.token);
   }, 60_000);
@@ -155,6 +265,7 @@ function getManagedClient(token: string) {
     status: null,
     statusError: null,
     idleTimer: null,
+    terminalDetachTimers: new Map(),
   };
 
   managed.client.subscribeStatus((status, error) => {
@@ -187,6 +298,9 @@ function getManagedClient(token: string) {
       payload: event,
     });
   });
+  managed.client.subscribeTerminal((event) => {
+    broadcastTerminal(managed, event);
+  });
 
   clients.set(normalizedToken, managed);
   return managed;
@@ -200,6 +314,9 @@ function connectPort(port: MessagePort, message: Extract<WorkerClientRequest, { 
     connectionID: message.connection_id,
     client,
     streams: new Map(),
+    terminalAllProjects: false,
+    terminalProjectKeys: new Set(),
+    terminalSessionIds: new Set(),
   });
   postToPort(port, {
     type: "ready",
@@ -216,12 +333,22 @@ function disconnectPort(port: MessagePort) {
   if (!state) {
     return;
   }
+  const terminalSessionIds = [...state.terminalSessionIds];
+  const terminalProjectKeys = [...state.terminalProjectKeys];
   for (const controller of state.streams.values()) {
     controller.abort();
   }
   state.streams.clear();
   state.client.ports.delete(port);
   portStates.delete(port);
+  for (const sessionID of terminalSessionIds) {
+    scheduleTerminalDetach(state.client, sessionID, "");
+  }
+  if (!state.terminalAllProjects) {
+    for (const projectPathKey of terminalProjectKeys) {
+      scheduleTerminalDetach(state.client, "", projectPathKey);
+    }
+  }
   scheduleManagedClientCleanup(state.client);
 }
 
@@ -325,6 +452,67 @@ async function resolveRequest(client: GatewayWebSocketClient, method: string, pa
       return client.cronManage(payload as CronManagePayload);
     case "memory.manage":
       return client.memoryManage(payload as MemoryManagePayload);
+    case "terminal.shell_options":
+      return client.terminalShellOptions();
+    case "terminal.list":
+      return {
+        sessions: await client.listTerminals(String(body.project_path_key ?? "")),
+      };
+    case "terminal.create":
+      return client.createTerminal({
+        cwd: String(body.cwd ?? ""),
+        projectPathKey: String(body.project_path_key ?? ""),
+        shell: typeof body.shell === "string" ? body.shell : undefined,
+        title: typeof body.title === "string" ? body.title : undefined,
+        cols: typeof body.cols === "number" ? body.cols : undefined,
+        rows: typeof body.rows === "number" ? body.rows : undefined,
+      });
+    case "terminal.attach":
+      return client.snapshotTerminal(
+        String(body.session_id ?? ""),
+        typeof body.max_bytes === "number" ? body.max_bytes : undefined,
+        String(body.project_path_key ?? ""),
+      );
+    case "terminal.input":
+      await client.inputTerminal(
+        String(body.session_id ?? ""),
+        String(body.data ?? ""),
+        String(body.project_path_key ?? ""),
+      );
+      return undefined;
+    case "terminal.resize":
+      await client.resizeTerminal(
+        String(body.session_id ?? ""),
+        typeof body.cols === "number" ? body.cols : 80,
+        typeof body.rows === "number" ? body.rows : 24,
+        String(body.project_path_key ?? ""),
+      );
+      return undefined;
+    case "terminal.rename":
+      return {
+        session: await client.renameTerminal(
+          String(body.session_id ?? ""),
+          String(body.title ?? ""),
+          String(body.project_path_key ?? ""),
+        ),
+      };
+    case "terminal.close":
+      return {
+        session: await client.closeTerminal(
+          String(body.session_id ?? ""),
+          String(body.project_path_key ?? ""),
+        ),
+      };
+    case "terminal.close_project":
+      return {
+        sessions: await client.closeProjectTerminals(String(body.project_path_key ?? "")),
+      };
+    case "terminal.detach":
+      await client.detachTerminal(
+        String(body.session_id ?? ""),
+        String(body.project_path_key ?? ""),
+      );
+      return undefined;
     case "provider.models":
       return client.getProviderModels(
         String(body.type ?? ""),
@@ -334,6 +522,108 @@ async function resolveRequest(client: GatewayWebSocketClient, method: string, pa
     default:
       throw new Error(`Unsupported Gateway SharedWorker method: ${method}`);
   }
+}
+
+function terminalPayloadProjectPathKey(payload: unknown) {
+  const body = (payload ?? {}) as Record<string, unknown>;
+  return typeof body.project_path_key === "string" ? body.project_path_key.trim() : "";
+}
+
+function terminalPayloadSessionId(payload: unknown) {
+  const body = (payload ?? {}) as Record<string, unknown>;
+  return typeof body.session_id === "string" ? body.session_id.trim() : "";
+}
+
+function terminalResponseSession(payload: unknown): TerminalSession | null {
+  const maybeSnapshot = payload as Partial<TerminalSnapshot> | null | undefined;
+  const session = maybeSnapshot?.session;
+  return session && typeof session.id === "string" ? session : null;
+}
+
+function updatePortTerminalInterest(
+  state: PortState,
+  method: string,
+  requestPayload: unknown,
+  responsePayload: unknown,
+) {
+  if (!method.startsWith("terminal.")) {
+    return;
+  }
+
+  const requestProjectPathKey = terminalPayloadProjectPathKey(requestPayload);
+  const requestSessionId = terminalPayloadSessionId(requestPayload);
+  const responseSession = terminalResponseSession(responsePayload);
+  const responseProjectPathKey = responseSession?.projectPathKey.trim() ?? "";
+  const responseSessionId = responseSession?.id.trim() ?? "";
+  const projectPathKey = requestProjectPathKey || responseProjectPathKey;
+  const sessionId = requestSessionId || responseSessionId;
+
+  switch (method) {
+    case "terminal.list":
+      if (!projectPathKey) {
+        state.terminalAllProjects = true;
+        return;
+      }
+      state.terminalProjectKeys.add(projectPathKey);
+      return;
+    case "terminal.create":
+    case "terminal.close_project":
+      if (projectPathKey) {
+        state.terminalProjectKeys.add(projectPathKey);
+      }
+      return;
+    case "terminal.attach":
+      if (projectPathKey) {
+        state.terminalProjectKeys.add(projectPathKey);
+      }
+      if (sessionId) {
+        state.terminalSessionIds.add(sessionId);
+      }
+      return;
+    case "terminal.detach":
+      if (sessionId) {
+        state.terminalSessionIds.delete(sessionId);
+      } else if (projectPathKey) {
+        state.terminalProjectKeys.delete(projectPathKey);
+      }
+      return;
+    case "terminal.close":
+      if (sessionId) {
+        state.terminalSessionIds.delete(sessionId);
+      }
+      return;
+  }
+}
+
+function primePortTerminalInterestForRequest(
+  state: PortState,
+  method: string,
+  requestPayload: unknown,
+) {
+  if (method !== "terminal.attach") {
+    return;
+  }
+  const sessionId = terminalPayloadSessionId(requestPayload);
+  const projectPathKey = terminalPayloadProjectPathKey(requestPayload);
+  if (sessionId) {
+    state.terminalSessionIds.add(sessionId);
+  }
+  if (projectPathKey) {
+    state.terminalProjectKeys.add(projectPathKey);
+  }
+  clearPendingTerminalDetach(state.client, sessionId, projectPathKey);
+}
+
+function handleTerminalDetachRequest(
+  port: MessagePort,
+  state: PortState,
+  message: Extract<WorkerClientRequest, { type: "request" }>,
+) {
+  const sessionId = terminalPayloadSessionId(message.payload);
+  const projectPathKey = terminalPayloadProjectPathKey(message.payload);
+  forgetPortTerminalInterest(state, sessionId, projectPathKey);
+  scheduleTerminalDetach(state.client, sessionId, projectPathKey);
+  respond(port, state.connectionID, message.request_id, { action: "detach" });
 }
 
 function respond(
@@ -358,7 +648,13 @@ async function handleRequest(
   message: Extract<WorkerClientRequest, { type: "request" }>,
 ) {
   try {
+    if (message.method === "terminal.detach") {
+      handleTerminalDetachRequest(port, state, message);
+      return;
+    }
+    primePortTerminalInterestForRequest(state, message.method, message.payload);
     const payload = await resolveRequest(state.client.client, message.method, message.payload);
+    updatePortTerminalInterest(state, message.method, message.payload, payload);
     respond(port, state.connectionID, message.request_id, payload);
   } catch (error) {
     respond(

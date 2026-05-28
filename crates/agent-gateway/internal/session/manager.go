@@ -42,6 +42,13 @@ type Manager struct {
 	settingsMu          sync.Mutex
 	nextSettingsSubID   int
 	settingsSubscribers map[int]chan *gatewayv1.SettingsSyncEvent
+	settingsSnapshotMu  sync.RWMutex
+	settingsSnapshot    map[string]any
+
+	terminalMu          sync.Mutex
+	nextTerminalSubID   int
+	terminalSubscribers map[int]chan *gatewayv1.TerminalEvent
+	terminalSessions    map[string]*gatewayv1.TerminalSession
 
 	chatMu                 sync.Mutex
 	nextChatSubID          int
@@ -138,6 +145,8 @@ func NewManager() *Manager {
 	return &Manager{
 		historySubscribers:     make(map[int]chan *gatewayv1.HistorySyncEvent),
 		settingsSubscribers:    make(map[int]chan *gatewayv1.SettingsSyncEvent),
+		terminalSubscribers:    make(map[int]chan *gatewayv1.TerminalEvent),
+		terminalSessions:       make(map[string]*gatewayv1.TerminalSession),
 		chatSubscribers:        make(map[int]chan *ChatBroadcastEvent),
 		chatRuns:               make(map[string]*chatRun),
 		chatRunByConversation:  make(map[string]string),
@@ -308,9 +317,13 @@ func (m *Manager) SetSession(s *AgentSession) {
 	if previous != s {
 		m.sessionEpoch += 1
 	}
+	sessionChanged := previous != s
 	m.session = s
 	m.mu.Unlock()
 
+	if sessionChanged {
+		m.clearTerminalSessionSnapshot()
+	}
 	if previous != nil && previous != s {
 		previous.Close()
 		m.failOpenChatRunsForSessionEpoch(previousEpoch, agentDisconnectedChatRunMessage)
@@ -332,6 +345,7 @@ func (m *Manager) ClearSession(session *AgentSession) {
 	}
 
 	session.Close()
+	m.clearTerminalSessionSnapshot()
 	m.failOpenChatRunsForSessionEpoch(clearedEpoch, agentDisconnectedChatRunMessage)
 }
 
@@ -553,10 +567,72 @@ func (m *Manager) SubscribeSettingsSync() (<-chan *gatewayv1.SettingsSyncEvent, 
 	return ch, cleanup
 }
 
+func (m *Manager) WebTerminalEnabled() bool {
+	m.settingsSnapshotMu.RLock()
+	defer m.settingsSnapshotMu.RUnlock()
+
+	remote, ok := m.settingsSnapshot["remote"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, ok := remote["enableWebTerminal"].(bool)
+	return ok && enabled
+}
+
+func (m *Manager) updateSettingsSnapshot(event *gatewayv1.SettingsSyncEvent) {
+	if event == nil {
+		return
+	}
+	m.ApplySettingsJSON(event.GetSettingsJson())
+}
+
+func parseSettingsJSON(settingsJSON string) (map[string]any, bool) {
+	raw := strings.TrimSpace(settingsJSON)
+	if raw == "" {
+		return nil, false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload == nil {
+		return nil, false
+	}
+	return payload, true
+}
+
+func (m *Manager) ApplySettingsJSON(settingsJSON string) {
+	payload, ok := parseSettingsJSON(settingsJSON)
+	if !ok {
+		return
+	}
+	m.settingsSnapshotMu.Lock()
+	if _, hasIncomingRemote := payload["remote"]; !hasIncomingRemote {
+		if existingRemote, hasExistingRemote := m.settingsSnapshot["remote"]; hasExistingRemote {
+			payload["remote"] = existingRemote
+		}
+	}
+	m.settingsSnapshot = payload
+	m.settingsSnapshotMu.Unlock()
+}
+
+func (m *Manager) ApplySettingsJSONPreservingRemote(settingsJSON string) {
+	payload, ok := parseSettingsJSON(settingsJSON)
+	if !ok {
+		return
+	}
+	m.settingsSnapshotMu.Lock()
+	if existingRemote, ok := m.settingsSnapshot["remote"]; ok {
+		payload["remote"] = existingRemote
+	} else {
+		delete(payload, "remote")
+	}
+	m.settingsSnapshot = payload
+	m.settingsSnapshotMu.Unlock()
+}
+
 func (m *Manager) broadcastSettingsSync(event *gatewayv1.SettingsSyncEvent) {
 	if event == nil {
 		return
 	}
+	m.updateSettingsSnapshot(event)
 
 	m.settingsMu.Lock()
 	subscribers := make([]chan *gatewayv1.SettingsSyncEvent, 0, len(m.settingsSubscribers))
@@ -569,6 +645,207 @@ func (m *Manager) broadcastSettingsSync(event *gatewayv1.SettingsSyncEvent) {
 		select {
 		case ch <- event:
 		default:
+		}
+	}
+}
+
+func (m *Manager) SubscribeTerminalEvents() (<-chan *gatewayv1.TerminalEvent, func()) {
+	ch := make(chan *gatewayv1.TerminalEvent, 4096)
+
+	m.terminalMu.Lock()
+	subID := m.nextTerminalSubID
+	m.nextTerminalSubID += 1
+	m.terminalSubscribers[subID] = ch
+	m.terminalMu.Unlock()
+
+	cleanup := func() {
+		m.terminalMu.Lock()
+		existing, ok := m.terminalSubscribers[subID]
+		if ok {
+			delete(m.terminalSubscribers, subID)
+			close(existing)
+		}
+		m.terminalMu.Unlock()
+	}
+
+	return ch, cleanup
+}
+
+func cloneTerminalSession(session *gatewayv1.TerminalSession) *gatewayv1.TerminalSession {
+	if session == nil {
+		return nil
+	}
+	return &gatewayv1.TerminalSession{
+		Id:             session.GetId(),
+		ProjectPathKey: session.GetProjectPathKey(),
+		Cwd:            session.GetCwd(),
+		Shell:          session.GetShell(),
+		Title:          session.GetTitle(),
+		Pid:            session.GetPid(),
+		Cols:           session.GetCols(),
+		Rows:           session.GetRows(),
+		CreatedAt:      session.GetCreatedAt(),
+		UpdatedAt:      session.GetUpdatedAt(),
+		FinishedAt:     session.GetFinishedAt(),
+		ExitCode:       session.GetExitCode(),
+		Running:        session.GetRunning(),
+	}
+}
+
+func terminalSessionSortKey(session *gatewayv1.TerminalSession) (string, uint64, string) {
+	if session == nil {
+		return "", 0, ""
+	}
+	return strings.TrimSpace(session.GetProjectPathKey()), session.GetCreatedAt(), strings.TrimSpace(session.GetId())
+}
+
+func sortTerminalSessions(sessions []*gatewayv1.TerminalSession) {
+	sort.Slice(sessions, func(i, j int) bool {
+		leftProject, leftCreatedAt, leftID := terminalSessionSortKey(sessions[i])
+		rightProject, rightCreatedAt, rightID := terminalSessionSortKey(sessions[j])
+		if leftProject != rightProject {
+			return leftProject < rightProject
+		}
+		if leftCreatedAt != rightCreatedAt {
+			return leftCreatedAt < rightCreatedAt
+		}
+		return leftID < rightID
+	})
+}
+
+func terminalSessionMatchesProject(session *gatewayv1.TerminalSession, projectPathKey string) bool {
+	projectPathKey = strings.TrimSpace(projectPathKey)
+	if projectPathKey == "" {
+		return true
+	}
+	if session == nil {
+		return false
+	}
+	return strings.TrimSpace(session.GetProjectPathKey()) == projectPathKey
+}
+
+func (m *Manager) clearTerminalSessionSnapshot() {
+	m.terminalMu.Lock()
+	m.terminalSessions = make(map[string]*gatewayv1.TerminalSession)
+	m.terminalMu.Unlock()
+}
+
+func (m *Manager) TerminalSessionSnapshot(projectPathKey string) []*gatewayv1.TerminalSession {
+	projectPathKey = strings.TrimSpace(projectPathKey)
+	m.terminalMu.Lock()
+	sessions := make([]*gatewayv1.TerminalSession, 0, len(m.terminalSessions))
+	for _, session := range m.terminalSessions {
+		if !terminalSessionMatchesProject(session, projectPathKey) {
+			continue
+		}
+		if cloned := cloneTerminalSession(session); cloned != nil {
+			sessions = append(sessions, cloned)
+		}
+	}
+	m.terminalMu.Unlock()
+	sortTerminalSessions(sessions)
+	return sessions
+}
+
+func (m *Manager) ReplaceTerminalSessionSnapshot(
+	projectPathKey string,
+	sessions []*gatewayv1.TerminalSession,
+) {
+	projectPathKey = strings.TrimSpace(projectPathKey)
+	m.terminalMu.Lock()
+	if projectPathKey == "" {
+		m.terminalSessions = make(map[string]*gatewayv1.TerminalSession)
+	} else {
+		for id, session := range m.terminalSessions {
+			if terminalSessionMatchesProject(session, projectPathKey) {
+				delete(m.terminalSessions, id)
+			}
+		}
+	}
+	for _, session := range sessions {
+		id := strings.TrimSpace(session.GetId())
+		if id == "" {
+			continue
+		}
+		m.terminalSessions[id] = cloneTerminalSession(session)
+	}
+	m.terminalMu.Unlock()
+}
+
+func (m *Manager) ApplyTerminalResponseSnapshot(
+	action string,
+	projectPathKey string,
+	resp *gatewayv1.TerminalResponse,
+) {
+	if resp == nil {
+		return
+	}
+	action = strings.TrimSpace(action)
+	projectPathKey = strings.TrimSpace(projectPathKey)
+
+	switch action {
+	case "list":
+		m.ReplaceTerminalSessionSnapshot(projectPathKey, resp.GetSessions())
+	case "close_project":
+		m.ReplaceTerminalSessionSnapshot(projectPathKey, nil)
+	case "close":
+		if sessionID := strings.TrimSpace(resp.GetSession().GetId()); sessionID != "" {
+			m.terminalMu.Lock()
+			delete(m.terminalSessions, sessionID)
+			m.terminalMu.Unlock()
+		}
+	case "create", "attach", "snapshot", "input", "resize", "rename":
+		session := resp.GetSession()
+		sessionID := strings.TrimSpace(session.GetId())
+		if sessionID == "" {
+			return
+		}
+		m.terminalMu.Lock()
+		m.terminalSessions[sessionID] = cloneTerminalSession(session)
+		m.terminalMu.Unlock()
+	}
+}
+
+func (m *Manager) applyTerminalEventSnapshot(event *gatewayv1.TerminalEvent) {
+	if event == nil {
+		return
+	}
+	kind := strings.TrimSpace(event.GetKind())
+	sessionID := strings.TrimSpace(event.GetSessionId())
+	if sessionID == "" && event.GetSession() != nil {
+		sessionID = strings.TrimSpace(event.GetSession().GetId())
+	}
+	if sessionID == "" {
+		return
+	}
+
+	m.terminalMu.Lock()
+	if kind == "closed" {
+		delete(m.terminalSessions, sessionID)
+	} else if session := cloneTerminalSession(event.GetSession()); session != nil {
+		m.terminalSessions[sessionID] = session
+	}
+	m.terminalMu.Unlock()
+}
+
+func (m *Manager) broadcastTerminalEvent(event *gatewayv1.TerminalEvent) {
+	if event == nil {
+		return
+	}
+
+	m.applyTerminalEventSnapshot(event)
+
+	m.terminalMu.Lock()
+	subscribers := make([]chan *gatewayv1.TerminalEvent, 0, len(m.terminalSubscribers))
+	for _, ch := range m.terminalSubscribers {
+		subscribers = append(subscribers, ch)
+	}
+	m.terminalMu.Unlock()
+
+	for _, ch := range subscribers {
+		select {
+		case ch <- event:
+		case <-time.After(50 * time.Millisecond):
 		}
 	}
 }
@@ -1046,6 +1323,11 @@ func (m *Manager) dispatchFromAgent(expected *AgentSession, env *gatewayv1.Agent
 
 	if settingsSync := env.GetSettingsSync(); settingsSync != nil {
 		m.broadcastSettingsSync(settingsSync)
+		return
+	}
+
+	if terminalEvent := env.GetTerminalEvent(); terminalEvent != nil {
+		m.broadcastTerminalEvent(terminalEvent)
 		return
 	}
 

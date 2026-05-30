@@ -28,8 +28,9 @@ DEV_GATEWAY_TOKEN ?= dev-token
 DEV_GATEWAY_HTTP_ADDR ?= :8080
 DEV_GATEWAY_GRPC_ADDR ?= :50051
 GATEWAY_DOCKER_IMAGE ?= liveagent-gateway:local
+RELEASE_TAG ?=
 
-.PHONY: all dev build desktop-build-macos desktop-build-macos-release desktop-build-macos-intel desktop-build-macos-m desktop-build-windows desktop-build-linux help
+.PHONY: all dev build desktop-build-macos desktop-build-macos-release desktop-build-macos-intel desktop-build-macos-m desktop-build-windows desktop-build-linux github-release-main check-github-release-tag help
 .PHONY: dev-gateway dev-webui
 .PHONY: proto webui gateway-build gateway-docker-build gateway-docker-run gateway-docker-smoke build-linux build-linux-amd build-linux-arm
 .PHONY: clean check-rust-target-% check-macos-signing-identity check-macos-notary-profile desktop-store-macos-notary-profile desktop-wait-macos-notary desktop-staple-macos desktop-verify-macos
@@ -73,6 +74,37 @@ desktop-build-windows: check-rust-target-$(DESKTOP_WINDOWS_TARGET)
 
 desktop-build-linux: check-rust-target-$(DESKTOP_LINUX_TARGET)
 	pnpm --dir $(AGENT_GUI_DIR) tauri build --target $(DESKTOP_LINUX_TARGET) --bundles $(DESKTOP_LINUX_BUNDLES)
+
+github-release-main: check-github-release-tag
+	git fetch origin --tags
+	git switch main
+	git pull --ff-only origin main
+	@set -e; \
+	if [ -n "$$(git status --porcelain)" ]; then \
+		echo "Working tree is not clean after syncing main. Commit or stash changes before release."; \
+		git status --short --branch; \
+		exit 1; \
+	fi
+	git status --short --branch
+	@set -e; \
+	if git rev-parse -q --verify "refs/tags/$(RELEASE_TAG)" >/dev/null; then \
+		echo "Release tag already exists locally: $(RELEASE_TAG)"; \
+		exit 1; \
+	fi; \
+	if git ls-remote --exit-code --tags origin "refs/tags/$(RELEASE_TAG)" >/dev/null 2>&1; then \
+		echo "Release tag already exists on origin: $(RELEASE_TAG)"; \
+		exit 1; \
+	fi
+	pnpm --dir $(AGENT_GUI_DIR) install --frozen-lockfile
+	pnpm --dir $(AGENT_GUI_DIR) test:release
+	cargo check --manifest-path $(AGENT_GUI_DIR)/src-tauri/Cargo.toml --tests
+	node scripts/release/prepare-app-version-from-tag.mjs "$(RELEASE_TAG)" --json
+	git tag -a "$(RELEASE_TAG)" -m "LiveAgent $(RELEASE_TAG)"
+	git push origin "$(RELEASE_TAG)"
+
+check-github-release-tag:
+	@if [ -z "$(RELEASE_TAG)" ]; then echo "RELEASE_TAG is required. Example: make github-release-main RELEASE_TAG=v0.1.10"; exit 1; fi
+	@node scripts/release/prepare-app-version-from-tag.mjs "$(RELEASE_TAG)" --json >/dev/null
 
 ## Gateway development
 dev-gateway:
@@ -193,6 +225,7 @@ help:
 	@printf "  %-34s %s\n" "make desktop-build-macos-m" "构建 macOS M 系列版本"
 	@printf "  %-34s %s\n" "make desktop-build-windows" "构建 Windows Tauri 应用"
 	@printf "  %-34s %s\n" "make desktop-build-linux" "构建 Linux AppImage/deb/rpm"
+	@printf "  %-34s %s\n" "make github-release-main RELEASE_TAG=vX.Y.Z" "从 main 打 tag 并触发 GitHub Release"
 	@printf "\n%s\n" "Gateway development"
 	@printf "  %-34s %s\n" "make dev-gateway" "启动 agent-gateway Go 服务"
 	@printf "  %-34s %s\n" "make dev-webui" "启动 agent-gateway Web UI 开发服务"

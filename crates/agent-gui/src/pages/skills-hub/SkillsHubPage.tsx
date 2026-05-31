@@ -487,7 +487,7 @@ export function SkillsHubPage(props: SkillsHubPageProps) {
     ? t("settings.skillsDisabledInChatMode")
     : skillsEnabled
       ? null
-      : t("settings.skillsHubDisabledHint");
+      : null;
 
   return (
     <div className="hub-page hub-page-enter relative flex h-full min-h-0 flex-1 flex-col overflow-hidden">

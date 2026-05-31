@@ -549,6 +549,9 @@ html[data-liveagent-webui="gateway"] [role="textbox"]:focus-visible {
   display: flex;
   height: 100%;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  flex: 1;
   flex-direction: column;
 }
 

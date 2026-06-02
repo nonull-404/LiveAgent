@@ -1412,8 +1412,8 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
     }
   }, []);
 
-  const showFirstOpenChooser =
-    projectReady && sessions.length === 0 && !fileTreeInitialized && !gitReviewInitialized;
+  const showProjectToolsChooser =
+    projectReady && currentActiveTab === "terminal" && !activeSession;
 
   const startFileTree = useCallback(() => {
     setFileTreeInitialized(true);
@@ -1845,7 +1845,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
               <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
                 {disabledMessage}
               </div>
-            ) : showFirstOpenChooser ? (
+            ) : showProjectToolsChooser ? (
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-5 px-5 py-6">
                 <div className="flex flex-col items-center gap-1">
                   <h3 className="text-sm font-medium text-foreground">

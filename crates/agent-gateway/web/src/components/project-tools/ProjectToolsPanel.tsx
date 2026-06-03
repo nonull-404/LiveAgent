@@ -1226,11 +1226,14 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
         disabled={!canReorderTabs}
         tabIndex={canReorderTabs ? 0 : -1}
         className={cn(
-          "flex h-6 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/45 opacity-70 transition-[background-color,color,opacity] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+          "relative z-10 flex h-6 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/45 opacity-70 transition-[background-color,color,opacity] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
           canReorderTabs
             ? "cursor-grab touch-none hover:bg-background/80 hover:text-foreground hover:opacity-100 focus-visible:bg-background focus-visible:text-foreground focus-visible:opacity-100 active:cursor-grabbing"
             : "cursor-default opacity-30",
         )}
+        onClick={() => {
+          consumeSuppressedTabClick(tabId);
+        }}
         onKeyDown={(event) => handleTabReorderKeyDown(event, tabId)}
         onPointerCancel={finishTabDrag}
         onPointerDown={(event) => handleTabPointerDown(event, tabId)}
@@ -1246,6 +1249,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
       handleTabPointerDown,
       handleTabPointerMove,
       handleTabReorderKeyDown,
+      consumeSuppressedTabClick,
       t,
     ],
   );
@@ -1571,7 +1575,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           key={tab.id}
                           data-project-tools-tab-id={tab.id}
                           className={cn(
-                            "project-tools-panel-tab group flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
+                            "project-tools-panel-tab group relative flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
                             currentActiveTab === "fileTree" &&
                               "border-border bg-muted text-foreground shadow-sm",
                             draggingTabId === tab.id &&
@@ -1579,26 +1583,31 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           )}
                           title={t("projectTools.fileTreeTitle")}
                         >
-                          {renderTabDragHandle(tab.id, t("projectTools.fileTreeTitle"))}
                           <button
                             type="button"
+                            aria-label={t("projectTools.fileTreeTitle")}
+                            className="absolute inset-0 z-0 rounded-md bg-transparent p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                             onClick={() => {
                               if (consumeSuppressedTabClick(tab.id)) return;
                               onActiveTabChange("fileTree");
                             }}
-                            className="flex min-w-0 flex-1 items-center gap-1.5 bg-transparent p-0 text-left text-inherit"
+                          />
+                          {renderTabDragHandle(tab.id, t("projectTools.fileTreeTitle"))}
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-inherit"
                           >
                             <FolderTree className="h-3.5 w-3.5 shrink-0" />
                             <span className="min-w-0 truncate">
                               {t("projectTools.fileTreeTitle")}
                             </span>
-                          </button>
+                          </div>
                           <button
                             type="button"
                             data-project-tools-tab-action="close"
                             aria-label={t("projectTools.closeFileTree")}
                             title={t("projectTools.closeFileTree")}
-                            className="ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                            className="relative z-10 ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                             onPointerDown={(event) => {
                               event.stopPropagation();
                             }}
@@ -1607,6 +1616,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                             }}
                             onClick={(event) => {
                               event.stopPropagation();
+                              consumeSuppressedTabClick(tab.id);
                               closeFileTree();
                             }}
                           >
@@ -1622,7 +1632,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           key={tab.id}
                           data-project-tools-tab-id={tab.id}
                           className={cn(
-                            "project-tools-panel-tab group flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
+                            "project-tools-panel-tab group relative flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
                             currentActiveTab === "gitReview" &&
                               "border-border bg-muted text-foreground shadow-sm",
                             draggingTabId === tab.id &&
@@ -1630,26 +1640,31 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           )}
                           title={t("projectTools.gitReviewTitle")}
                         >
-                          {renderTabDragHandle(tab.id, t("projectTools.gitReviewTitle"))}
                           <button
                             type="button"
+                            aria-label={t("projectTools.gitReviewTitle")}
+                            className="absolute inset-0 z-0 rounded-md bg-transparent p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                             onClick={() => {
                               if (consumeSuppressedTabClick(tab.id)) return;
                               onActiveTabChange("gitReview");
                             }}
-                            className="flex min-w-0 flex-1 items-center gap-1.5 bg-transparent p-0 text-left text-inherit"
+                          />
+                          {renderTabDragHandle(tab.id, t("projectTools.gitReviewTitle"))}
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-inherit"
                           >
                             <GitBranch className="h-3.5 w-3.5 shrink-0" />
                             <span className="min-w-0 truncate">
                               {t("projectTools.gitReviewTitle")}
                             </span>
-                          </button>
+                          </div>
                           <button
                             type="button"
                             data-project-tools-tab-action="close"
                             aria-label={t("projectTools.closeGitReview")}
                             title={t("projectTools.closeGitReview")}
-                            className="ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+                            className="relative z-10 ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100"
                             onPointerDown={(event) => {
                               event.stopPropagation();
                             }}
@@ -1658,6 +1673,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                             }}
                             onClick={(event) => {
                               event.stopPropagation();
+                              consumeSuppressedTabClick(tab.id);
                               closeGitReview();
                             }}
                           >
@@ -1679,7 +1695,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                         key={session.id}
                         data-project-tools-tab-id={session.id}
                         className={cn(
-                          "project-tools-panel-tab group flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
+                          "project-tools-panel-tab group relative flex h-8 max-w-[12rem] shrink-0 select-none items-center gap-1 rounded-md border border-transparent px-1.5 text-xs text-muted-foreground transition-[background-color,border-color,color,opacity,transform,box-shadow] hover:bg-muted/80 hover:text-foreground",
                           currentActiveTab === "terminal" &&
                             activeSession?.id === session.id &&
                             "border-border bg-muted text-foreground shadow-sm",
@@ -1690,15 +1706,20 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                         )}
                         title={sessionTitle}
                       >
-                        {renderTabDragHandle(session.id, sessionTitle)}
                         <button
                           type="button"
+                          aria-label={sessionTitle}
+                          className="absolute inset-0 z-0 rounded-md bg-transparent p-0 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                           onClick={() => {
                             if (consumeSuppressedTabClick(session.id)) return;
                             setActiveSessionId(session.id);
                             onActiveTabChange("terminal");
                           }}
-                          className="flex min-w-0 flex-1 items-center gap-1.5 bg-transparent p-0 text-left text-inherit"
+                        />
+                        {renderTabDragHandle(session.id, sessionTitle)}
+                        <div
+                          aria-hidden="true"
+                          className="pointer-events-none relative z-10 flex h-full min-w-0 flex-1 items-center gap-1.5 text-left text-inherit"
                         >
                           <Terminal className="h-3.5 w-3.5 shrink-0" />
                           <span className="min-w-0 truncate">{sessionTitle}</span>
@@ -1707,7 +1728,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           ) : (
                             <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
                           )}
-                        </button>
+                        </div>
                         <button
                           type="button"
                           data-project-tools-tab-action="close"
@@ -1719,7 +1740,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           }
                           disabled={isClosing}
                           className={cn(
-                            "ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+                            "relative z-10 ml-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded text-muted-foreground/70 transition-colors hover:bg-background hover:text-foreground focus-visible:bg-background focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
                             isPendingClose
                               ? "bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground md:opacity-100"
                               : "md:opacity-0 md:group-hover:opacity-100 md:focus-visible:opacity-100",
@@ -1732,6 +1753,7 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
                           }}
                           onClick={(event) => {
                             event.stopPropagation();
+                            consumeSuppressedTabClick(session.id);
                             handleCloseRequest(session);
                           }}
                         >

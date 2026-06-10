@@ -3,7 +3,7 @@ use std::future::Future;
 use std::io;
 use std::sync::{Arc, Mutex, Once};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use futures_util::{SinkExt, StreamExt};
 use reqwest::header::{HeaderName, HeaderValue};
@@ -46,6 +46,9 @@ const UI_ONLY_SETTINGS_SYNC_FIELDS: &[&str] = &[
 ];
 const GATEWAY_GRPC_MAX_MESSAGE_BYTES: usize = 64 * 1024 * 1024;
 const GATEWAY_RECONNECT_DELAY: Duration = Duration::from_secs(5);
+const GATEWAY_CHAT_LEASE_MS: u64 = 15_000;
+const GATEWAY_CHAT_RUNNING_LEASE_MS: u64 = 30 * 60_000;
+const GATEWAY_CHAT_LEASE_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const TUNNEL_BODY_CHUNK_SIZE: usize = 64 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
@@ -163,6 +166,40 @@ struct GatewayChatCancelEvent {
     conversation_id: String,
 }
 
+#[derive(Debug, Clone)]
+struct RemoteChatInboxRecord {
+    request: GatewayChatRequestEvent,
+    state: String,
+    lease_owner: Option<String>,
+    lease_expires_at: Option<Instant>,
+    attempt: u32,
+    started: bool,
+    last_error: Option<String>,
+    created_at: Instant,
+    updated_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct RemoteChatEnqueueOutcome {
+    request_id: String,
+    conversation_id: String,
+    control_type: &'static str,
+    should_wake_runtime: bool,
+    inserted: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayChatClaimedRequest {
+    pub request_id: String,
+    pub client_request_id: String,
+    pub conversation_id: String,
+    pub state: String,
+    pub attempt: u32,
+    pub lease_ms: u64,
+    pub request: GatewayChatRequestEvent,
+}
+
 pub const CHAT_HISTORY_SYNC_EVENT: &str = "chat-history:changed";
 pub const CHAT_HISTORY_TRUNCATED_EVENT: &str = "chat-history:truncated";
 pub const GATEWAY_SETTINGS_SYNC_EVENT: &str = "gateway:settings-sync";
@@ -211,12 +248,13 @@ pub struct GatewayController {
     outbound_tx: Mutex<Option<mpsc::Sender<proto::AgentEnvelope>>>,
     settings_snapshot: Mutex<Option<Value>>,
     pending_history_truncations: Mutex<HashMap<String, String>>,
-    pending_chat_requests: Mutex<Vec<GatewayChatRequestEvent>>,
+    remote_chat_inbox: Mutex<HashMap<String, RemoteChatInboxRecord>>,
     tunnels: Mutex<HashMap<String, LocalTunnelRecord>>,
     tunnel_http_streams: Mutex<HashMap<String, TunnelHttpBodySender>>,
     tunnel_ws_streams: Mutex<HashMap<String, mpsc::Sender<proto::TunnelFrame>>>,
     pending_tunnel_controls: Mutex<HashMap<String, oneshot::Sender<proto::TunnelControlResponse>>>,
     terminal_forwarder_once: Once,
+    remote_chat_inbox_sweeper_once: Once,
 }
 
 impl GatewayController {
@@ -249,17 +287,19 @@ impl GatewayController {
             outbound_tx: Mutex::new(None),
             settings_snapshot: Mutex::new(None),
             pending_history_truncations: Mutex::new(HashMap::new()),
-            pending_chat_requests: Mutex::new(Vec::new()),
+            remote_chat_inbox: Mutex::new(HashMap::new()),
             tunnels: Mutex::new(HashMap::new()),
             tunnel_http_streams: Mutex::new(HashMap::new()),
             tunnel_ws_streams: Mutex::new(HashMap::new()),
             pending_tunnel_controls: Mutex::new(HashMap::new()),
             terminal_forwarder_once: Once::new(),
+            remote_chat_inbox_sweeper_once: Once::new(),
         }
     }
 
     pub fn start(self: &Arc<Self>) -> Result<(), String> {
         self.start_terminal_forwarder();
+        self.start_remote_chat_inbox_sweeper();
         self.ensure_runner()
     }
 
@@ -276,6 +316,20 @@ impl GatewayController {
                     };
                     if let Err(error) = sender.blocking_send(envelope) {
                         eprintln!("send gateway terminal event failed: {error}");
+                    }
+                }
+            });
+        });
+    }
+
+    fn start_remote_chat_inbox_sweeper(self: &Arc<Self>) {
+        let controller = Arc::clone(self);
+        self.remote_chat_inbox_sweeper_once.call_once(move || {
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(GATEWAY_CHAT_LEASE_SWEEP_INTERVAL).await;
+                    if let Err(error) = controller.expire_remote_chat_leases().await {
+                        eprintln!("expire gateway remote chat leases failed: {error}");
                     }
                 }
             });
@@ -381,7 +435,15 @@ impl GatewayController {
             })
     }
 
-    pub async fn send_chat_event(&self, request_id: String, event: Value) -> Result<(), String> {
+    pub async fn send_chat_event(
+        &self,
+        request_id: String,
+        event: Value,
+        worker_id: Option<String>,
+    ) -> Result<(), String> {
+        if !self.renew_remote_chat_request_lease(&request_id, worker_id.as_deref(), true)? {
+            return Ok(());
+        }
         let envelope = build_chat_event_envelope(request_id, event)?;
         self.send_agent_envelope(envelope).await
     }
@@ -798,21 +860,49 @@ impl GatewayController {
                         .collect(),
                     history_truncation_key,
                 };
-                self.queue_pending_chat_request(event_payload.clone())?;
-                self.app_handle
-                    .emit("gateway:chat-request", event_payload)
-                    .map_err(|e| format!("emit gateway chat request failed: {e}"))
+                let enqueue_outcome = self.enqueue_remote_chat_request(event_payload.clone())?;
+                if let Err(error) = self
+                    .send_gateway_chat_control_event(
+                        enqueue_outcome.request_id.clone(),
+                        enqueue_outcome.conversation_id.clone(),
+                        enqueue_outcome.control_type,
+                    )
+                    .await
+                {
+                    if enqueue_outcome.inserted {
+                        self.remove_remote_chat_request(&enqueue_outcome.request_id)?;
+                    }
+                    return Err(error);
+                }
+                if enqueue_outcome.should_wake_runtime {
+                    self.app_handle
+                        .emit(
+                            "gateway:chat-request-ready",
+                            json!({ "requestId": enqueue_outcome.request_id }),
+                        )
+                        .map_err(|e| format!("emit gateway chat request ready failed: {e}"))?;
+                }
+                Ok(())
             }
-            Some(proto::gateway_envelope::Payload::CancelChat(request)) => self
-                .app_handle
-                .emit(
-                    "gateway:chat-cancel",
-                    GatewayChatCancelEvent {
-                        request_id,
-                        conversation_id: request.conversation_id,
-                    },
+            Some(proto::gateway_envelope::Payload::CancelChat(request)) => {
+                let conversation_id = request.conversation_id;
+                self.cancel_remote_chat_request(&request_id, &conversation_id)?;
+                self.send_gateway_chat_control_event(
+                    request_id.clone(),
+                    conversation_id.clone(),
+                    "cancelled",
                 )
-                .map_err(|e| format!("emit gateway chat cancel failed: {e}")),
+                .await?;
+                self.app_handle
+                    .emit(
+                        "gateway:chat-cancel",
+                        GatewayChatCancelEvent {
+                            request_id,
+                            conversation_id,
+                        },
+                    )
+                    .map_err(|e| format!("emit gateway chat cancel failed: {e}"))
+            }
             Some(proto::gateway_envelope::Payload::CronManage(request)) => {
                 let should_refresh_settings =
                     matches!(request.action.trim(), "create" | "update" | "delete");
@@ -1692,28 +1782,13 @@ impl GatewayController {
 
     pub fn take_pending_chat_request(
         &self,
-        request_id: String,
+        _request_id: String,
     ) -> Result<Option<GatewayChatRequestEvent>, String> {
-        let request_id = request_id.trim();
-        if request_id.is_empty() {
-            return Ok(None);
-        }
-        let mut pending = self
-            .pending_chat_requests
-            .lock()
-            .map_err(|_| "gateway pending chat request lock poisoned".to_string())?;
-        let index = pending
-            .iter()
-            .position(|request| request.request_id.trim() == request_id);
-        Ok(index.map(|index| pending.remove(index)))
+        Ok(None)
     }
 
     pub fn take_pending_chat_requests(&self) -> Result<Vec<GatewayChatRequestEvent>, String> {
-        let mut pending = self
-            .pending_chat_requests
-            .lock()
-            .map_err(|_| "gateway pending chat request lock poisoned".to_string())?;
-        Ok(std::mem::take(&mut *pending))
+        Ok(Vec::new())
     }
 
     async fn current_settings_snapshot(&self) -> Result<Value, String> {
@@ -1745,18 +1820,580 @@ impl GatewayController {
         Ok(snapshot)
     }
 
-    fn queue_pending_chat_request(&self, request: GatewayChatRequestEvent) -> Result<(), String> {
+    fn enqueue_remote_chat_request(
+        &self,
+        request: GatewayChatRequestEvent,
+    ) -> Result<RemoteChatEnqueueOutcome, String> {
         let request_id = request.request_id.trim();
+        if request_id.is_empty() {
+            return Ok(RemoteChatEnqueueOutcome {
+                request_id: String::new(),
+                conversation_id: String::new(),
+                control_type: "delivered",
+                should_wake_runtime: false,
+                inserted: false,
+            });
+        }
+        let request_id = request_id.to_string();
+        let client_request_id = request.client_request_id.trim().to_string();
+        let mut inbox = self
+            .remote_chat_inbox
+            .lock()
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+
+        let existing_request_id = if inbox.contains_key(&request_id) {
+            Some(request_id.clone())
+        } else if client_request_id.is_empty() {
+            None
+        } else {
+            inbox.iter().find_map(|(candidate_request_id, record)| {
+                if record.request.client_request_id.trim() == client_request_id {
+                    Some(candidate_request_id.clone())
+                } else {
+                    None
+                }
+            })
+        };
+
+        if let Some(existing_request_id) = existing_request_id {
+            let now = Instant::now();
+            let record = inbox
+                .get_mut(&existing_request_id)
+                .ok_or_else(|| "remote chat request disappeared while enqueueing".to_string())?;
+            Self::merge_duplicate_remote_chat_request(record, request, now);
+            return Ok(RemoteChatEnqueueOutcome {
+                request_id: existing_request_id,
+                conversation_id: record.request.conversation_id.clone(),
+                control_type: Self::remote_chat_record_control_type(record),
+                should_wake_runtime: Self::remote_chat_record_should_wake_runtime(record, now),
+                inserted: false,
+            });
+        }
+
+        let now = Instant::now();
+        inbox.insert(
+            request_id.clone(),
+            RemoteChatInboxRecord {
+                request,
+                state: "queued".to_string(),
+                lease_owner: None,
+                lease_expires_at: None,
+                attempt: 0,
+                started: false,
+                last_error: None,
+                created_at: now,
+                updated_at: now,
+            },
+        );
+        let conversation_id = inbox
+            .get(request_id.as_str())
+            .map(|record| record.request.conversation_id.clone())
+            .unwrap_or_default();
+        Ok(RemoteChatEnqueueOutcome {
+            request_id,
+            conversation_id,
+            control_type: "delivered",
+            should_wake_runtime: true,
+            inserted: true,
+        })
+    }
+
+    fn remove_remote_chat_request(&self, request_id: &str) -> Result<(), String> {
+        let request_id = request_id.trim();
         if request_id.is_empty() {
             return Ok(());
         }
-        let mut pending = self
-            .pending_chat_requests
+        let mut inbox = self
+            .remote_chat_inbox
             .lock()
-            .map_err(|_| "gateway pending chat request lock poisoned".to_string())?;
-        pending.retain(|item| item.request_id.trim() != request_id);
-        pending.push(request);
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+        inbox.remove(request_id);
         Ok(())
+    }
+
+    fn cancel_remote_chat_request(
+        &self,
+        request_id: &str,
+        conversation_id: &str,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim();
+        let conversation_id = conversation_id.trim();
+        let mut inbox = self
+            .remote_chat_inbox
+            .lock()
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+        if !request_id.is_empty() {
+            inbox.remove(request_id);
+        }
+        if !conversation_id.is_empty() {
+            inbox.retain(|_, record| record.request.conversation_id.trim() != conversation_id);
+        }
+        Ok(())
+    }
+
+    fn merge_duplicate_remote_chat_request(
+        record: &mut RemoteChatInboxRecord,
+        request: GatewayChatRequestEvent,
+        now: Instant,
+    ) {
+        // A reconnect can replay the same gateway request while the JS runner is
+        // already processing it. Preserve local lease/owner/started state and
+        // only fill metadata that may have been absent in the original payload.
+        if !record.started && record.state.trim() == "queued" {
+            let canonical_request_id = record.request.request_id.clone();
+            record.request = request;
+            record.request.request_id = canonical_request_id;
+            record.updated_at = now;
+            return;
+        }
+        if record.request.client_request_id.trim().is_empty()
+            && !request.client_request_id.trim().is_empty()
+        {
+            record.request.client_request_id = request.client_request_id.clone();
+        }
+        if record.request.conversation_id.trim().is_empty()
+            && !request.conversation_id.trim().is_empty()
+        {
+            record.request.conversation_id = request.conversation_id.clone();
+        }
+        record.updated_at = now;
+    }
+
+    fn remote_chat_record_control_type(record: &RemoteChatInboxRecord) -> &'static str {
+        if record.started {
+            return "started";
+        }
+        match record.state.trim() {
+            "claimed" => "claimed",
+            "starting" => "starting",
+            "running" => "started",
+            "failed" => "failed",
+            "cancelled" => "cancelled",
+            "completed" => "completed",
+            _ => "delivered",
+        }
+    }
+
+    fn remote_chat_record_should_wake_runtime(
+        record: &RemoteChatInboxRecord,
+        now: Instant,
+    ) -> bool {
+        if record.started {
+            return false;
+        }
+        match record.state.trim() {
+            "queued" | "delivered" => true,
+            "claimed" | "starting" => record
+                .lease_expires_at
+                .map(|expires_at| now >= expires_at)
+                .unwrap_or(true),
+            _ => false,
+        }
+    }
+
+    fn remote_chat_record_has_current_lease(
+        record: &RemoteChatInboxRecord,
+        worker_id: &str,
+        now: Instant,
+    ) -> bool {
+        if worker_id.trim().is_empty() {
+            return false;
+        }
+        if record.lease_owner.as_deref() != Some(worker_id) {
+            return false;
+        }
+        record
+            .lease_expires_at
+            .map(|expires_at| now < expires_at)
+            .unwrap_or(false)
+    }
+
+    fn remote_chat_record_is_owned_by_worker(
+        record: &RemoteChatInboxRecord,
+        worker_id: &str,
+    ) -> bool {
+        !worker_id.trim().is_empty() && record.lease_owner.as_deref() == Some(worker_id)
+    }
+
+    fn remote_chat_record_lease_ms(record: &RemoteChatInboxRecord) -> u64 {
+        if record.started {
+            GATEWAY_CHAT_RUNNING_LEASE_MS
+        } else {
+            GATEWAY_CHAT_LEASE_MS
+        }
+    }
+
+    fn renew_remote_chat_request_lease(
+        &self,
+        request_id: &str,
+        worker_id: Option<&str>,
+        require_current: bool,
+    ) -> Result<bool, String> {
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Ok(true);
+        }
+        let worker_id = worker_id.unwrap_or_default().trim();
+        let mut inbox = self
+            .remote_chat_inbox
+            .lock()
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+        let Some(record) = inbox.get(request_id) else {
+            return Ok(true);
+        };
+        let now = Instant::now();
+        if require_current && !Self::remote_chat_record_has_current_lease(record, worker_id, now) {
+            return Ok(false);
+        }
+        if !require_current && !Self::remote_chat_record_is_owned_by_worker(record, worker_id) {
+            return Ok(false);
+        }
+        let lease_ms = Self::remote_chat_record_lease_ms(record);
+        if let Some(record) = inbox.get_mut(request_id) {
+            record.lease_expires_at = Some(now + Duration::from_millis(lease_ms));
+            record.updated_at = now;
+        }
+        Ok(true)
+    }
+
+    pub async fn claim_next_chat_request(
+        &self,
+        worker_id: String,
+        lease_ms: Option<u64>,
+    ) -> Result<Option<GatewayChatClaimedRequest>, String> {
+        let worker_id = worker_id.trim().to_string();
+        if worker_id.is_empty() {
+            return Err("worker_id is required".to_string());
+        }
+        let lease_ms = lease_ms
+            .unwrap_or(GATEWAY_CHAT_LEASE_MS)
+            .clamp(1_000, 120_000);
+        let now = Instant::now();
+        let claimed = {
+            let mut inbox = self
+                .remote_chat_inbox
+                .lock()
+                .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+            let mut selected_request_id: Option<String> = None;
+            let mut selected_created_at: Option<Instant> = None;
+            for (request_id, record) in inbox.iter() {
+                let state = record.state.trim();
+                let lease_expired = record
+                    .lease_expires_at
+                    .map(|expires_at| now >= expires_at)
+                    .unwrap_or(true);
+                if state == "queued"
+                    || ((state == "claimed" || state == "starting")
+                        && lease_expired
+                        && !record.started)
+                {
+                    if selected_created_at
+                        .map(|created_at| record.created_at < created_at)
+                        .unwrap_or(true)
+                    {
+                        selected_request_id = Some(request_id.clone());
+                        selected_created_at = Some(record.created_at);
+                    }
+                }
+            }
+            selected_request_id.and_then(|request_id| {
+                inbox.get_mut(&request_id).map(|record| {
+                    record.state = "claimed".to_string();
+                    record.lease_owner = Some(worker_id.clone());
+                    record.lease_expires_at = Some(now + Duration::from_millis(lease_ms));
+                    record.attempt = record.attempt.saturating_add(1);
+                    record.updated_at = now;
+                    GatewayChatClaimedRequest {
+                        request_id: record.request.request_id.clone(),
+                        client_request_id: record.request.client_request_id.clone(),
+                        conversation_id: record.request.conversation_id.clone(),
+                        state: record.state.clone(),
+                        attempt: record.attempt,
+                        lease_ms,
+                        request: record.request.clone(),
+                    }
+                })
+            })
+        };
+        if let Some(claimed) = claimed.as_ref() {
+            self.send_gateway_chat_control_event(
+                claimed.request_id.clone(),
+                claimed.conversation_id.clone(),
+                "claimed",
+            )
+            .await?;
+        }
+        Ok(claimed)
+    }
+
+    pub async fn mark_chat_request_started(
+        &self,
+        request_id: String,
+        conversation_id: String,
+        worker_id: String,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim().to_string();
+        let conversation_id = conversation_id.trim().to_string();
+        let worker_id = worker_id.trim().to_string();
+        {
+            let mut inbox = self
+                .remote_chat_inbox
+                .lock()
+                .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+            let now = Instant::now();
+            let record = inbox
+                .get_mut(&request_id)
+                .ok_or_else(|| "remote chat request lease is no longer active".to_string())?;
+            if !Self::remote_chat_record_has_current_lease(record, &worker_id, now) {
+                return Err("remote chat request lease is no longer active".to_string());
+            }
+            record.state = "running".to_string();
+            record.started = true;
+            if !conversation_id.is_empty() {
+                record.request.conversation_id = conversation_id.clone();
+            }
+            record.lease_expires_at =
+                Some(now + Duration::from_millis(GATEWAY_CHAT_RUNNING_LEASE_MS));
+            record.updated_at = now;
+        }
+        self.send_gateway_chat_control_event(request_id, conversation_id, "started")
+            .await
+    }
+
+    pub async fn complete_chat_request(
+        &self,
+        request_id: String,
+        conversation_id: String,
+        worker_id: String,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim().to_string();
+        let conversation_id = conversation_id.trim().to_string();
+        let worker_id = worker_id.trim().to_string();
+        let should_send = {
+            let mut inbox = self
+                .remote_chat_inbox
+                .lock()
+                .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+            let Some(record) = inbox.get(&request_id) else {
+                return Ok(());
+            };
+            if !Self::remote_chat_record_is_owned_by_worker(record, &worker_id) {
+                return Ok(());
+            }
+            inbox.remove(&request_id);
+            true
+        };
+        if !should_send {
+            return Ok(());
+        }
+        self.send_gateway_chat_control_event(request_id, conversation_id, "completed")
+            .await
+    }
+
+    pub async fn fail_chat_request(
+        &self,
+        request_id: String,
+        conversation_id: Option<String>,
+        error_code: String,
+        message: String,
+        terminal: bool,
+        worker_id: String,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim().to_string();
+        let worker_id = worker_id.trim().to_string();
+        let conversation_id = conversation_id.unwrap_or_default();
+        let should_send = {
+            let mut inbox = self
+                .remote_chat_inbox
+                .lock()
+                .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+            let Some(record) = inbox.get_mut(&request_id) else {
+                return Ok(());
+            };
+            if !Self::remote_chat_record_is_owned_by_worker(record, &worker_id) {
+                return Ok(());
+            }
+            record.state = if terminal { "failed" } else { "queued" }.to_string();
+            record.lease_owner = None;
+            record.lease_expires_at = None;
+            record.last_error = Some(message.clone());
+            record.updated_at = Instant::now();
+            if terminal {
+                inbox.remove(&request_id);
+            }
+            true
+        };
+        if !should_send {
+            return Ok(());
+        }
+        self.send_gateway_chat_control_event_with_details(
+            request_id,
+            conversation_id,
+            "failed",
+            error_code,
+            message,
+        )
+        .await
+    }
+
+    pub fn heartbeat_chat_request(
+        &self,
+        request_id: String,
+        worker_id: String,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim();
+        let worker_id = worker_id.trim();
+        if request_id.is_empty() || worker_id.is_empty() {
+            return Ok(());
+        }
+        let mut inbox = self
+            .remote_chat_inbox
+            .lock()
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+        if let Some(record) = inbox.get_mut(request_id) {
+            if record.lease_owner.as_deref() == Some(worker_id) {
+                let lease_ms = Self::remote_chat_record_lease_ms(record);
+                record.lease_expires_at = Some(Instant::now() + Duration::from_millis(lease_ms));
+                record.updated_at = Instant::now();
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn publish_chat_runtime_status(
+        &self,
+        worker_id: String,
+        state: String,
+        visible: bool,
+        active_run_count: u32,
+    ) -> Result<(), String> {
+        let worker_id = worker_id.trim().to_string();
+        if worker_id.is_empty() {
+            return Ok(());
+        }
+        let state = match state.trim() {
+            "draining" => "draining",
+            "busy" => "busy",
+            "suspended" => "suspended",
+            _ => "ready",
+        }
+        .to_string();
+        let envelope =
+            build_gateway_runtime_status_envelope(worker_id, state, visible, active_run_count);
+        match self.send_agent_envelope(envelope).await {
+            Ok(()) => Ok(()),
+            Err(error) if error.contains("outbound stream is offline") => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub fn release_chat_request_lease(
+        &self,
+        request_id: String,
+        worker_id: String,
+    ) -> Result<(), String> {
+        let request_id = request_id.trim();
+        let worker_id = worker_id.trim();
+        let mut inbox = self
+            .remote_chat_inbox
+            .lock()
+            .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+        if let Some(record) = inbox.get_mut(request_id) {
+            if record.lease_owner.as_deref() == Some(worker_id) && !record.started {
+                record.state = "queued".to_string();
+                record.lease_owner = None;
+                record.lease_expires_at = None;
+                record.updated_at = Instant::now();
+            }
+        }
+        Ok(())
+    }
+
+    async fn expire_remote_chat_leases(&self) -> Result<(), String> {
+        let mut failed: Vec<(String, String)> = Vec::new();
+        let mut wake = false;
+        {
+            let mut inbox = self
+                .remote_chat_inbox
+                .lock()
+                .map_err(|_| "gateway remote chat inbox lock poisoned".to_string())?;
+            let now = Instant::now();
+            for record in inbox.values_mut() {
+                let Some(expires_at) = record.lease_expires_at else {
+                    continue;
+                };
+                if now < expires_at {
+                    continue;
+                }
+                if record.started {
+                    record.state = "failed".to_string();
+                    failed.push((
+                        record.request.request_id.clone(),
+                        record.request.conversation_id.clone(),
+                    ));
+                    continue;
+                }
+                record.state = "queued".to_string();
+                record.lease_owner = None;
+                record.lease_expires_at = None;
+                record.updated_at = now;
+                wake = true;
+            }
+            for (request_id, _) in &failed {
+                inbox.remove(request_id);
+            }
+        }
+        if wake {
+            let _ = self.app_handle.emit(
+                "gateway:chat-request-ready",
+                json!({ "reason": "lease_expired" }),
+            );
+        }
+        for (request_id, conversation_id) in failed {
+            self.send_gateway_chat_control_event_with_details(
+                request_id,
+                conversation_id,
+                "failed",
+                "desktop_runtime_lease_expired".to_string(),
+                "Desktop chat runtime stopped before completing the remote request.".to_string(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn send_gateway_chat_control_event(
+        &self,
+        request_id: String,
+        conversation_id: String,
+        event_type: &str,
+    ) -> Result<(), String> {
+        self.send_gateway_chat_control_event_with_details(
+            request_id,
+            conversation_id,
+            event_type,
+            String::new(),
+            String::new(),
+        )
+        .await
+    }
+
+    async fn send_gateway_chat_control_event_with_details(
+        &self,
+        request_id: String,
+        conversation_id: String,
+        event_type: &str,
+        error_code: String,
+        message: String,
+    ) -> Result<(), String> {
+        self.send_agent_envelope(build_gateway_chat_control_event_envelope(
+            request_id,
+            conversation_id,
+            event_type,
+            error_code,
+            message,
+        ))
+        .await
     }
 
     async fn send_tunnel_control_request(
@@ -3090,10 +3727,147 @@ mod tests {
         build_local_settings_update_event_payload, build_tunnel_upstream_url,
         history_share_resolve_error_code, merge_settings_sync_snapshot, normalize_tunnel_ttl,
         required_terminal_project_path_key, set_disconnected_status, tunnel_expires_at,
-        validate_tunnel_target_url, GatewayStatusSnapshot,
+        validate_tunnel_target_url, GatewayChatRequestEvent, GatewayController,
+        GatewayStatusSnapshot, RemoteChatInboxRecord, GATEWAY_CHAT_LEASE_MS,
+        GATEWAY_CHAT_RUNNING_LEASE_MS,
     };
     use crate::commands::settings::RemoteSettingsPayload;
     use serde_json::{json, Value};
+    use std::time::{Duration, Instant};
+
+    fn gateway_chat_request(
+        request_id: &str,
+        client_request_id: &str,
+        conversation_id: &str,
+        message: &str,
+    ) -> GatewayChatRequestEvent {
+        GatewayChatRequestEvent {
+            request_id: request_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            client_request_id: client_request_id.to_string(),
+            message: message.to_string(),
+            force_hydrate: false,
+            selected_model: None,
+            runtime_controls: None,
+            execution_mode: String::new(),
+            workdir: String::new(),
+            selected_system_tools: Vec::new(),
+            uploaded_files: Vec::new(),
+            history_truncation_key: None,
+        }
+    }
+
+    fn remote_chat_record(
+        request: GatewayChatRequestEvent,
+        state: &str,
+        started: bool,
+        now: Instant,
+    ) -> RemoteChatInboxRecord {
+        RemoteChatInboxRecord {
+            request,
+            state: state.to_string(),
+            lease_owner: Some("worker-1".to_string()),
+            lease_expires_at: Some(now + Duration::from_secs(30)),
+            attempt: 1,
+            started,
+            last_error: None,
+            created_at: now - Duration::from_secs(10),
+            updated_at: now,
+        }
+    }
+
+    #[test]
+    fn remote_chat_started_records_use_running_lease() {
+        let now = Instant::now();
+        let queued = remote_chat_record(
+            gateway_chat_request("request-1", "client-1", "conversation-1", "hello"),
+            "queued",
+            false,
+            now,
+        );
+        let running = remote_chat_record(
+            gateway_chat_request("request-2", "client-2", "conversation-2", "hello"),
+            "running",
+            true,
+            now,
+        );
+
+        assert_eq!(
+            GatewayController::remote_chat_record_lease_ms(&queued),
+            GATEWAY_CHAT_LEASE_MS
+        );
+        assert_eq!(
+            GatewayController::remote_chat_record_lease_ms(&running),
+            GATEWAY_CHAT_RUNNING_LEASE_MS
+        );
+        assert!(GATEWAY_CHAT_RUNNING_LEASE_MS > GATEWAY_CHAT_LEASE_MS);
+    }
+
+    #[test]
+    fn duplicate_remote_chat_request_preserves_running_record() {
+        let now = Instant::now();
+        let mut record = remote_chat_record(
+            gateway_chat_request("request-1", "client-1", "conversation-1", "first"),
+            "running",
+            true,
+            now,
+        );
+        let original_lease_owner = record.lease_owner.clone();
+        let original_lease_expires_at = record.lease_expires_at;
+
+        GatewayController::merge_duplicate_remote_chat_request(
+            &mut record,
+            gateway_chat_request("request-2", "client-1", "conversation-2", "replayed"),
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(record.request.request_id, "request-1");
+        assert_eq!(record.request.client_request_id, "client-1");
+        assert_eq!(record.request.conversation_id, "conversation-1");
+        assert_eq!(record.request.message, "first");
+        assert_eq!(record.state, "running");
+        assert!(record.started);
+        assert_eq!(record.lease_owner, original_lease_owner);
+        assert_eq!(record.lease_expires_at, original_lease_expires_at);
+        assert_eq!(
+            GatewayController::remote_chat_record_control_type(&record),
+            "started"
+        );
+        assert!(!GatewayController::remote_chat_record_should_wake_runtime(
+            &record,
+            now + Duration::from_secs(1),
+        ));
+    }
+
+    #[test]
+    fn duplicate_queued_remote_chat_request_keeps_canonical_request_id() {
+        let now = Instant::now();
+        let mut record = remote_chat_record(
+            gateway_chat_request("request-1", "client-1", "conversation-1", "first"),
+            "queued",
+            false,
+            now,
+        );
+        record.lease_owner = None;
+        record.lease_expires_at = None;
+
+        GatewayController::merge_duplicate_remote_chat_request(
+            &mut record,
+            gateway_chat_request("request-2", "client-1", "conversation-2", "replayed"),
+            now + Duration::from_secs(1),
+        );
+
+        assert_eq!(record.request.request_id, "request-1");
+        assert_eq!(record.request.client_request_id, "client-1");
+        assert_eq!(record.request.conversation_id, "conversation-2");
+        assert_eq!(record.request.message, "replayed");
+        assert_eq!(record.state, "queued");
+        assert!(!record.started);
+        assert!(GatewayController::remote_chat_record_should_wake_runtime(
+            &record,
+            now + Duration::from_secs(1),
+        ));
+    }
 
     #[test]
     fn history_share_resolve_error_code_maps_public_share_failures() {
@@ -3372,6 +4146,56 @@ mod tests {
     }
 
     #[test]
+    fn build_chat_event_envelope_accepts_started_control_event() {
+        let envelope = build_chat_event_envelope(
+            "request-1".to_string(),
+            json!({
+                "type": "started",
+                "conversation_id": "conversation-1"
+            }),
+        )
+        .expect("build chat started event envelope");
+
+        let chat_event = match envelope.payload.expect("payload") {
+            super::proto::agent_envelope::Payload::ChatEvent(event) => event,
+            _ => panic!("expected chat event payload"),
+        };
+        assert_eq!(chat_event.conversation_id, "conversation-1");
+        assert_eq!(
+            chat_event.r#type,
+            super::proto::chat_event::ChatEventType::Token as i32
+        );
+
+        let data: Value = serde_json::from_str(&chat_event.data).expect("chat event data");
+        assert_eq!(data["type"], "started");
+    }
+
+    #[test]
+    fn build_chat_event_envelope_accepts_backend_accepted_control_event() {
+        let envelope = build_chat_event_envelope(
+            "request-1".to_string(),
+            json!({
+                "type": "accepted",
+                "conversation_id": "conversation-1"
+            }),
+        )
+        .expect("build chat accepted event envelope");
+
+        let chat_event = match envelope.payload.expect("payload") {
+            super::proto::agent_envelope::Payload::ChatEvent(event) => event,
+            _ => panic!("expected chat event payload"),
+        };
+        assert_eq!(chat_event.conversation_id, "conversation-1");
+        assert_eq!(
+            chat_event.r#type,
+            super::proto::chat_event::ChatEventType::Token as i32
+        );
+
+        let data: Value = serde_json::from_str(&chat_event.data).expect("chat event data");
+        assert_eq!(data["type"], "accepted");
+    }
+
+    #[test]
     fn build_chat_event_envelope_preserves_title_final_flag() {
         let envelope = build_chat_event_envelope(
             "request-1".to_string(),
@@ -3458,6 +4282,18 @@ fn build_chat_event_envelope(
         .unwrap_or_default();
 
     let (event_kind, data) = match event_type.as_str() {
+        "accepted" => (
+            proto::chat_event::ChatEventType::Token as i32,
+            json!({
+                "type": "accepted",
+            }),
+        ),
+        "started" => (
+            proto::chat_event::ChatEventType::Token as i32,
+            json!({
+                "type": "started",
+            }),
+        ),
         "token" => (
             proto::chat_event::ChatEventType::Token as i32,
             json!({
@@ -3550,6 +4386,63 @@ fn build_chat_event_envelope(
             },
         )),
     })
+}
+
+fn build_gateway_chat_control_event_envelope(
+    request_id: String,
+    conversation_id: String,
+    event_type: &str,
+    error_code: String,
+    message: String,
+) -> proto::AgentEnvelope {
+    let state = match event_type.trim() {
+        "accepted" => "queued",
+        "delivered" => "delivered",
+        "claimed" => "claimed",
+        "starting" => "starting",
+        "started" => "running",
+        "completed" => "completed",
+        "failed" => "failed",
+        "cancelled" => "cancelled",
+        _ => "",
+    }
+    .to_string();
+    proto::AgentEnvelope {
+        request_id: request_id.clone(),
+        timestamp: now_unix_seconds(),
+        payload: Some(proto::agent_envelope::Payload::ChatControl(
+            proto::ChatControlEvent {
+                request_id,
+                conversation_id,
+                r#type: event_type.trim().to_string(),
+                state,
+                error_code,
+                message,
+                ..Default::default()
+            },
+        )),
+    }
+}
+
+fn build_gateway_runtime_status_envelope(
+    worker_id: String,
+    state: String,
+    visible: bool,
+    active_run_count: u32,
+) -> proto::AgentEnvelope {
+    proto::AgentEnvelope {
+        request_id: format!("runtime-status-{}", worker_id.trim()),
+        timestamp: now_unix_seconds(),
+        payload: Some(proto::agent_envelope::Payload::RuntimeStatus(
+            proto::RuntimeStatusEvent {
+                worker_id,
+                state,
+                visible,
+                active_run_count,
+                timestamp: now_unix_seconds(),
+            },
+        )),
+    }
 }
 
 fn build_history_sync_envelope(

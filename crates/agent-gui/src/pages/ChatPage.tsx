@@ -121,7 +121,6 @@ import {
   isProjectToolsGitReviewOpen,
   isProjectToolsTunnelOpen,
   normalizeChatRuntimeControlsForProvider,
-  type ProviderId,
   type SelectedModel,
   type SystemToolId,
   type WorkspaceProject,
@@ -183,10 +182,12 @@ import { startConversationTitleJob } from "./chat/conversationTitleJob";
 import {
   type ActiveGatewayBridgeRequest,
   type EnsureGatewayBridgeConversationReadyOptions,
-  type GatewaySelectedModelEvent,
-  normalizeGatewayProviderType,
   type SendChatAction,
 } from "./chat/gatewayBridgeTypes";
+import {
+  type EffectiveChatModelSelection,
+  resolveEffectiveChatModelSelection,
+} from "./chat/modelSelection";
 import { runAgentConversationTurn } from "./chat/runAgentConversationTurn";
 import { runTextConversationTurn } from "./chat/runTextConversationTurn";
 import { clearSilentMemoryExtractionState } from "./chat/silentMemoryExtraction";
@@ -255,16 +256,6 @@ function buildFallbackGatewayStatus(remote: AppSettings["remote"]): GatewayRunti
     lastError: null,
   };
 }
-
-type EffectiveChatModelSelection = {
-  selectedModel: {
-    customProviderId: string;
-    model: string;
-  };
-  provider: AppSettings["customProviders"][number];
-  providerId: ProviderId;
-  model: string;
-};
 
 type SyncedRunningConversationRuntime = {
   workdir?: string;
@@ -433,58 +424,6 @@ async function importPastedTextsAsFiles(workdir: string, pastes: MentionComposer
   return {
     files,
     fileByPasteId,
-  };
-}
-
-function resolveEffectiveChatModelSelection(
-  settings: AppSettings,
-  gatewaySelectedModel?: GatewaySelectedModelEvent,
-): EffectiveChatModelSelection {
-  const resolveLocalSelection = (): EffectiveChatModelSelection => {
-    if (!settings.selectedModel) {
-      throw new Error("请先在左上角选择一个模型（或先去设置添加模型）。");
-    }
-
-    const { customProviderId, model } = settings.selectedModel;
-    const provider = settings.customProviders.find((item) => item.id === customProviderId);
-    if (!provider) {
-      throw new Error("所选供应商不存在，请重新选择模型。");
-    }
-
-    return {
-      selectedModel: settings.selectedModel,
-      provider,
-      providerId: provider.type,
-      model,
-    };
-  };
-
-  if (!gatewaySelectedModel) {
-    return resolveLocalSelection();
-  }
-
-  const customProviderId = gatewaySelectedModel.customProviderId.trim();
-  const model = gatewaySelectedModel.model.trim();
-  const providerType = normalizeGatewayProviderType(gatewaySelectedModel.providerType);
-  if (!customProviderId || !model || !providerType) {
-    throw new Error("远程请求携带的模型配置无效，请在 WebUI 重新选择模型后重试。");
-  }
-
-  const exactProvider = settings.customProviders.find((item) => item.id === customProviderId);
-  const provider =
-    exactProvider ?? settings.customProviders.find((item) => item.type === providerType);
-  if (!provider) {
-    throw new Error("远程请求所选模型对应的供应商不存在，请先在桌面端配置该类型供应商。");
-  }
-
-  return {
-    selectedModel: {
-      customProviderId: provider.id,
-      model,
-    },
-    provider,
-    providerId: provider.type,
-    model,
   };
 }
 
@@ -784,15 +723,6 @@ export function ChatPage(props: ChatPageProps) {
     remoteRuntimeStatus.online === true &&
     remoteRuntimeStatus.enabled === true &&
     remoteRuntimeStatus.configured === true;
-  const tunnelManagerToolAvailable =
-    isAgentMode && settings.remote.enableWebTunnels === true && canShareHistory;
-  const tunnelManagerToolDisabledMessage = !isAgentMode
-    ? t("chat.runtime.tunnelAgentModeRequired")
-    : !settings.remote.enableWebTunnels
-      ? t("chat.runtime.tunnelWebDisabled")
-      : !canShareHistory
-        ? t("chat.runtime.tunnelRemoteOffline")
-        : undefined;
 
   const refreshHistoryWorkdirs = useCallback(async () => {
     try {
@@ -1128,11 +1058,6 @@ export function ChatPage(props: ChatPageProps) {
       ),
     );
   }, [activeWorkspaceProjectPath, setSettings]);
-
-  const handleOpenTunnelToolPanel = useCallback(() => {
-    if (!tunnelManagerToolAvailable) return;
-    openTunnelToolPanel();
-  }, [openTunnelToolPanel, tunnelManagerToolAvailable]);
 
   const handleBrowseWorkspaceProjectInSystemFileManager = useCallback(
     async (project: WorkspaceProject) => {
@@ -2681,6 +2606,7 @@ export function ChatPage(props: ChatPageProps) {
     const gatewayBridgeEvents = createGatewayBridgeEventController({
       conversationId,
       requestId: gatewayBridgeRequest?.requestId ?? `conversation-live-${conversationId}`,
+      workerId: gatewayBridgeRequest?.workerId,
       enabled: Boolean(gatewayBridgeRequest) || hasRemoteGatewayTarget,
       sendEvent: queueGatewayBridgeEventForRequest,
       resolveErrorConversationId: () =>
@@ -2947,12 +2873,22 @@ export function ChatPage(props: ChatPageProps) {
       pendingUserMessage,
     ]);
     let conversationRunStarted = false;
+    let gatewayRunStarted = false;
     let gatewayActivityPublishChain: Promise<void> = Promise.resolve();
     function queueGatewayConversationActivity(running: boolean) {
       gatewayActivityPublishChain = gatewayActivityPublishChain.then(() =>
         publishGatewayConversationActivity(conversationId, running, conversationCwd),
       );
       void gatewayActivityPublishChain;
+    }
+    function acknowledgeGatewayRunStarted() {
+      if (gatewayRunStarted) {
+        return;
+      }
+      gatewayRunStarted = true;
+      gatewayBridgeEvents.queueStarted();
+      gatewayBridgeEvents.queueToken("", { round: 0 });
+      queueGatewayConversationActivity(true);
     }
     function markConversationRunStarted() {
       if (conversationRunStarted) {
@@ -2963,8 +2899,6 @@ export function ChatPage(props: ChatPageProps) {
       resetLiveTranscript(transcriptStore);
       setConversationAbortController(conversationId, requestController);
       setConversationSendingState(conversationId, true);
-      gatewayBridgeEvents.queueToken("", { round: 0 });
-      queueGatewayConversationActivity(true);
       if (isConversationVisible()) {
         stickToBottom();
       }
@@ -2975,7 +2909,9 @@ export function ChatPage(props: ChatPageProps) {
       }
       setConversationAbortController(conversationId, null);
       setConversationSendingState(conversationId, false);
-      queueGatewayConversationActivity(false);
+      if (gatewayRunStarted) {
+        queueGatewayConversationActivity(false);
+      }
     }
 
     const shouldSynchronizeInitialPersistBeforeGatewayStream =
@@ -3015,11 +2951,22 @@ export function ChatPage(props: ChatPageProps) {
         markConversationRunStopped();
         return;
       }
+      acknowledgeGatewayRunStarted();
     } else {
       if (shouldSynchronizeInitialPersistBeforeGatewayStream) {
-        await initialPersist;
+        const persisted = await initialPersist;
+        if (!persisted) {
+          const message = "历史记录保存失败，已取消本次远程对话。";
+          setConversationErrorState(message);
+          gatewayBridgeEvents.emitError(message, conversationId);
+          gatewayBridgeEvents.close();
+          markConversationRunStopped();
+          return;
+        }
+        acknowledgeGatewayRunStarted();
       } else {
         void initialPersist;
+        acknowledgeGatewayRunStarted();
       }
     }
     let activeCompactionRollback: {
@@ -4519,8 +4466,6 @@ export function ChatPage(props: ChatPageProps) {
                 chatRuntimeControls={chatRuntimeControlsForCurrentProvider}
                 reasoningOptions={chatRuntimeReasoningOptions}
                 gitClient={tauriGitClient}
-                tunnelToolAvailable={tunnelManagerToolAvailable}
-                tunnelToolDisabledMessage={tunnelManagerToolDisabledMessage}
                 onGitChanged={(gitWorkdir) =>
                   window.dispatchEvent(
                     new CustomEvent("liveagent:git-changed", {
@@ -4528,7 +4473,6 @@ export function ChatPage(props: ChatPageProps) {
                     }),
                   )
                 }
-                onOpenTunnelToolPanel={handleOpenTunnelToolPanel}
                 onSend={handleSend}
                 onStop={handleStopSending}
                 onComposerBusyChange={handleComposerBusyChange}

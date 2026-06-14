@@ -38,6 +38,7 @@ const SSH_RECONNECT_DELAYS: [Duration; 3] = [
     Duration::from_secs(5),
     Duration::from_secs(10),
 ];
+const SSH_RECONNECT_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(20);
 const SSH_STATUS_CONNECTED: &str = "connected";
 const SSH_STATUS_RECONNECTING: &str = "reconnecting";
 const SSH_STATUS_DISCONNECTED: &str = "disconnected";
@@ -984,10 +985,19 @@ impl TerminalSessionRegistry {
                 runtime.finish_reconnect_runner();
                 return;
             }
-            match self
-                .reconnect_ssh_session(Arc::clone(&entry), attempt)
-                .await
+            let reconnect_result = match timeout(
+                SSH_RECONNECT_ATTEMPT_TIMEOUT,
+                self.reconnect_ssh_session(Arc::clone(&entry), attempt),
+            )
+            .await
             {
+                Ok(result) => result,
+                Err(_) => Err(format!(
+                    "SSH reconnect timed out after {} seconds",
+                    SSH_RECONNECT_ATTEMPT_TIMEOUT.as_secs()
+                )),
+            };
+            match reconnect_result {
                 Ok(()) => {
                     runtime.finish_reconnect_runner();
                     return;

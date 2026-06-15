@@ -2114,29 +2114,34 @@ html[data-liveagent-webui="gateway"] .project-terminal-viewport .xterm-viewport:
     max-height: none;
     border: 0;
     border-radius: 0;
-    /* This panel is a full-screen (inset:0) mobile sheet. A translucent
+    /* This panel is a full-screen (inset:0) mobile surface. A translucent
        background plus `backdrop-filter: blur()` means the whole viewport behind
-       it is re-sampled and blurred every frame — and because the React open
-       animation also fades opacity 0→1 and slides translateY, the panel is
+       it is re-sampled and blurred every frame - and because the React open
+       animation also fades opacity 0->1 and moves the panel, the panel is
        see-through *and* blurring mid-transition, before its content paints.
        That translucent, blurred, content-less frame is the flash. An opaque
-       sheet with no backdrop blur covers everything it covers anyway, so drop
-       both and slide only. */
+       surface with no backdrop blur covers everything it covers anyway, so
+       keep the mobile transition to the same simple fade used by settings. */
     background: hsl(var(--background));
     box-shadow: none;
-    opacity: 1 !important;
+    opacity: 0 !important;
     visibility: hidden;
     transition:
-      transform 200ms ease,
-      visibility 0s linear 200ms !important;
+      opacity 220ms ease,
+      visibility 0s linear 220ms !important;
+    will-change: opacity;
+    contain: layout style;
+    translate: 0 0 !important;
+    transform: none !important;
     -webkit-backface-visibility: hidden;
     backface-visibility: hidden;
   }
 
   html[data-liveagent-webui="gateway"] .project-tools-panel[data-state="open"] {
+    opacity: 1 !important;
     visibility: visible;
     transition:
-      transform 200ms ease,
+      opacity 220ms ease,
       visibility 0s linear 0s !important;
   }
 
@@ -2148,6 +2153,12 @@ html[data-liveagent-webui="gateway"] .project-terminal-viewport .xterm-viewport:
 
   html[data-liveagent-webui="gateway"] .project-tools-panel-inner {
     min-width: 0;
+    opacity: 1 !important;
+    translate: 0 0 !important;
+    transform: translate3d(0, 0, 0) !important;
+    transition: none !important;
+    -webkit-backface-visibility: hidden;
+    backface-visibility: hidden;
   }
 
   html[data-liveagent-webui="gateway"] .project-tools-panel-handle {

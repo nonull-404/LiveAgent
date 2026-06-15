@@ -442,7 +442,11 @@ export function ProjectToolsPanel(props: ProjectToolsPanelProps) {
     "--project-tools-panel-width": panelWidthStyleValue(panelStyleWidth),
   } as CSSProperties;
   const effectiveWidthCollapsed = !isOpen && collapseImmediately ? true : widthCollapsed;
-  const effectiveShouldRenderContent = !isOpen && collapseImmediately ? false : shouldRenderContent;
+  const effectiveShouldRenderContent = isOpen
+    ? true
+    : collapseImmediately
+      ? false
+      : shouldRenderContent;
   const isControlled = externalSessions !== undefined;
   const localSessions = useMemo(
     () =>

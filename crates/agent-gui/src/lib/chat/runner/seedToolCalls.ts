@@ -131,7 +131,7 @@ function parseSeedToolCallMarkup(markup: string): ToolCall | null {
   };
 }
 
-function parseDsmlToolCallMarkup(markup: string): ToolCall[] {
+export function parseDsmlToolCallMarkup(markup: string): ToolCall[] {
   const toolCalls: ToolCall[] = [];
   let invokeMatch: RegExpExecArray | null = null;
   DSML_INVOKE_PATTERN.lastIndex = 0;

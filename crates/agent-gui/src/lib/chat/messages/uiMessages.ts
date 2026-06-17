@@ -11,6 +11,7 @@ import type {
   DelegateAgentCardResultDetails,
   DelegateAgentResultDetails,
 } from "../../tools/builtinTypes";
+import { isProviderNativeWebSearchToolName } from "../../providers/nativeWebSearch";
 import {
   enrichHostedSearchContentWithText,
   type HostedSearchBlock,
@@ -565,6 +566,46 @@ function isDelegateAgentCardToolCall(toolCall: ToolCall) {
 
 function isParentDelegateAgentToolCall(toolCall: ToolCall) {
   return toolCall.name === "Agent" && !isDelegateAgentCardToolCall(toolCall);
+}
+
+function isDsmlRecoveredToolCallId(toolCallId: string | undefined) {
+  return toolCallId?.startsWith("dsml-tool-call-") ?? false;
+}
+
+function isRecoveredProviderNativeWebSearchResult(toolResult: ToolResultMessage | undefined) {
+  const details = toolResult?.details as Record<string, unknown> | undefined;
+  return details?.recoveredProviderNativeWebSearch === true;
+}
+
+export function shouldDisplayToolTraceItem(
+  item: ToolTraceItem,
+  options?: { hasHostedSearch?: boolean },
+) {
+  if (!isProviderNativeWebSearchToolName(item.toolCall.name)) {
+    return true;
+  }
+  if (options?.hasHostedSearch) {
+    return false;
+  }
+  if (isDsmlRecoveredToolCallId(item.toolCall.id)) {
+    return false;
+  }
+  if (isRecoveredProviderNativeWebSearchResult(item.toolResult)) {
+    return false;
+  }
+  return true;
+}
+
+function shouldDisplayToolBlock(
+  toolCall: ToolCall,
+  toolResult: ToolResultMessage | undefined,
+  blocks: UiRoundContentBlock[],
+  options?: { contentHasHostedSearch?: boolean },
+) {
+  return shouldDisplayToolTraceItem(toolResult ? { toolCall, toolResult } : { toolCall }, {
+    hasHostedSearch:
+      options?.contentHasHostedSearch || blocks.some((block) => block.kind === "hostedSearch"),
+  });
 }
 
 type DelegateAgentPlaceholder = {
@@ -1134,12 +1175,20 @@ function upsertToolBlock(
   blocks: UiRoundContentBlock[],
   toolCall: ToolCall,
   toolResult?: ToolResultMessage,
+  options?: { contentHasHostedSearch?: boolean },
 ): UiRoundContentBlock[] {
   if (isParentDelegateAgentToolCall(toolCall)) return blocks;
 
   const existingIdx = blocks.findIndex(
     (block) => block.kind === "tool" && block.item.toolCall.id === toolCall.id,
   );
+  if (!shouldDisplayToolBlock(toolCall, toolResult, blocks, options)) {
+    return existingIdx >= 0
+      ? blocks.filter(
+          (block) => !(block.kind === "tool" && block.item.toolCall.id === toolCall.id),
+        )
+      : blocks;
+  }
   if (existingIdx >= 0) {
     const existing = blocks[existingIdx];
     if (existing.kind !== "tool") return blocks;
@@ -1179,7 +1228,12 @@ export function getRoundThinkingText(round: Pick<UiRound, "blocks">) {
 }
 
 export function getRoundToolTrace(round: Pick<UiRound, "blocks">): ToolTraceItem[] {
-  return round.blocks.flatMap((block) => (block.kind === "tool" ? [block.item] : []));
+  const hasHostedSearch = round.blocks.some((block) => block.kind === "hostedSearch");
+  return round.blocks.flatMap((block) =>
+    block.kind === "tool" && shouldDisplayToolTraceItem(block.item, { hasHostedSearch })
+      ? [block.item]
+      : [],
+  );
 }
 
 export function getRoundHostedSearches(round: Pick<UiRound, "blocks">): HostedSearchBlock[] {
@@ -1338,6 +1392,9 @@ function buildUiRoundBlocks(
   const content = enrichHostedSearchContentWithText(
     assistant.content,
   ) as AssistantMessage["content"];
+  const contentHasHostedSearch = content.some((block) =>
+    Boolean(normalizeHostedSearchBlock(block)),
+  );
   for (const block of content) {
     if (block.type === "text") {
       blocks = appendTextLikeBlock(blocks, "text", block.text);
@@ -1353,7 +1410,7 @@ function buildUiRoundBlocks(
         blocks = appendDelegateAgentItemBlocks(blocks, block, toolResult);
         continue;
       }
-      blocks = upsertToolBlock(blocks, block, toolResult);
+      blocks = upsertToolBlock(blocks, block, toolResult, { contentHasHostedSearch });
       continue;
     }
     const hostedSearch = normalizeHostedSearchBlock(block);

@@ -167,6 +167,6 @@ export function sanitizeMessagesForContinuation(messages: Message[]): Message[] 
 export function sanitizeContextForModelRequest(context: Context): Context {
   return {
     ...context,
-    messages: sanitizeMessagesForModelContext(context.messages),
+    messages: sanitizeMessagesForContinuation(context.messages),
   };
 }

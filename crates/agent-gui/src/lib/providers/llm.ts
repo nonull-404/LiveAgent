@@ -2,9 +2,12 @@ import type {
   AssistantMessage,
   CacheRetention,
   Context,
+  Message,
   Model,
   OpenAICompletionsCompat,
   SimpleStreamOptions,
+  ToolCall,
+  ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { getModel } from "@earendil-works/pi-ai";
 import { streamAnthropic } from "@earendil-works/pi-ai/anthropic";
@@ -32,6 +35,7 @@ import {
   type ReasoningLevel,
 } from "../settings";
 import { withPowerActivity } from "../system/powerActivity";
+import { wrapDeepSeekDsmlToolCallStream } from "./deepSeekDsmlToolCallStream";
 import {
   createHostedSearchEventAggregator,
   createHostedSearchProbeId,
@@ -44,7 +48,11 @@ import {
   attachOpenAICompletionsNativeAttachments,
   attachOpenAIResponsesNativeAttachments,
 } from "./nativeResponsesAttachments";
-import { providerSupportsNativeWebSearch } from "./nativeWebSearch";
+import {
+  buildProviderNativeWebSearchBridgeResult,
+  isProviderNativeWebSearchToolName as isProviderNativeWebSearchToolCallName,
+  providerSupportsNativeWebSearch,
+} from "./nativeWebSearch";
 import { prepareProxyRequest } from "./proxy";
 
 export { providerSupportsNativeWebSearch } from "./nativeWebSearch";
@@ -101,6 +109,12 @@ export type StreamOptionsEx = SimpleStreamOptions & {
    * 所以这里我们自己调用 streamAnthropic() 并把 toolChoice 显式传下去。
    */
   toolChoice?: ToolChoice;
+  /**
+   * DeepSeek 的 Anthropic 兼容端点偶尔会把工具调用泄漏成 DSML 文本。
+   * 开启后在事件流层把 DSML 转回结构化 toolCall，避免 stop 截断工具循环。
+   */
+  deepSeekDsmlToolCallRepair?: boolean;
+  deepSeekAnthropicPayloadToolBlockFlattening?: boolean;
 };
 
 export function buildDualAuthHeaders(apiKey: string): Record<string, string> {
@@ -282,144 +296,141 @@ function applyAnthropicThinkingPayloadOverride(
   };
 }
 
-function isDeepSeekAnthropicReplayModel(model: Model<any>, payload?: Record<string, unknown>) {
+function isDeepSeekAnthropicModel(model: Model<any>) {
   const modelId = String(model.id ?? "").toLowerCase();
-  const payloadModelId = String(payload?.model ?? "").toLowerCase();
   const baseUrl = String((model as { baseUrl?: unknown }).baseUrl ?? "").toLowerCase();
+  return modelId.includes("deepseek") || baseUrl.includes("deepseek");
+}
+
+function isDeepSeekAnthropicEndpoint(params: {
+  api?: string;
+  baseUrl?: string;
+  modelId?: string;
+}) {
+  if (params.api && params.api !== "anthropic-messages") return false;
+  const baseUrl = params.baseUrl?.trim().toLowerCase() ?? "";
+  const modelId = params.modelId?.trim().toLowerCase() ?? "";
+  return baseUrl.includes("deepseek.com") || modelId.includes("deepseek");
+}
+
+function isAnthropicPayloadToolUseBlock(block: unknown): block is Record<string, unknown> {
+  return isRecord(block) && block.type === "tool_use" && typeof block.id === "string";
+}
+
+function isAnthropicPayloadToolResultBlock(
+  block: unknown,
+): block is Record<string, unknown> & { tool_use_id: string } {
   return (
-    modelId.includes("deepseek") ||
-    payloadModelId.includes("deepseek") ||
-    baseUrl.includes("deepseek")
+    isRecord(block) &&
+    block.type === "tool_result" &&
+    typeof block.tool_use_id === "string"
   );
 }
 
-function hasEnabledAnthropicThinkingPayload(payload: Record<string, unknown>) {
-  const thinking = payload.thinking;
-  if (!isRecord(thinking)) return false;
-  return thinking.type === "enabled" || thinking.type === "adaptive";
+function isDeepSeekDsmlRecoveredToolCallId(id: unknown) {
+  return typeof id === "string" && id.startsWith("dsml-tool-call-");
 }
 
-function isSameAnthropicReplayAssistant(assistant: AssistantMessage, model: Model<any>) {
-  return (
-    assistant.provider === model.provider &&
-    assistant.api === model.api &&
-    assistant.model === model.id
+function anthropicPayloadToolUseToContextText(toolUse: Record<string, unknown>) {
+  const name = typeof toolUse.name === "string" ? toolUse.name : "";
+  return truncateContextText(
+    [
+      "Previous assistant tool request:",
+      `tool_call_id: ${toolUse.id}`,
+      `tool_name: ${name || "unknown"}`,
+      "arguments:",
+      safeJsonForContext(isRecord(toolUse.input) ? toolUse.input : toolUse.input ?? {}),
+    ].join("\n"),
   );
 }
 
-function getDeepSeekReplayThinkingBlocks(
-  assistant: AssistantMessage,
-  payloadBlocks: unknown[],
-): Array<Record<string, unknown>> {
-  const existingSignatures = new Set(
-    payloadBlocks.flatMap((block) => {
-      if (!isRecord(block) || block.type !== "thinking") return [];
-      return typeof block.signature === "string" && block.signature.trim() ? [block.signature] : [];
-    }),
-  );
-
-  return assistant.content.flatMap((block) => {
-    if (block.type !== "thinking") return [];
-    const signature = block.thinkingSignature?.trim();
-    if (!signature || existingSignatures.has(signature)) return [];
-    return [
-      {
-        type: "thinking",
-        thinking: block.thinking,
-        signature,
-      },
-    ];
-  });
-}
-
-function insertThinkingBeforeFirstToolUse(
-  payloadBlocks: unknown[],
-  thinkingBlocks: Array<Record<string, unknown>>,
+function anthropicPayloadToolResultToContextText(
+  toolResult: Record<string, unknown> & { tool_use_id: string },
 ) {
-  const firstToolUseIndex = payloadBlocks.findIndex(
-    (block) => isRecord(block) && block.type === "tool_use",
+  const content = toolResult.content;
+  const contentText = Array.isArray(content)
+    ? content
+        .map((block) => {
+          if (isRecord(block) && block.type === "text" && typeof block.text === "string") {
+            return block.text;
+          }
+          return safeJsonForContext(block);
+        })
+        .filter((text) => text.trim())
+        .join("\n\n")
+    : typeof content === "string"
+      ? content
+      : safeJsonForContext(content ?? "");
+
+  return truncateContextText(
+    [
+      "Previous tool execution result:",
+      `tool_call_id: ${toolResult.tool_use_id}`,
+      typeof toolResult.name === "string" ? `tool_name: ${toolResult.name}` : "",
+      typeof toolResult.is_error === "boolean"
+        ? `is_error: ${toolResult.is_error ? "true" : "false"}`
+        : "",
+      "result:",
+      contentText || "(empty result)",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   );
-  const insertIndex = firstToolUseIndex >= 0 ? firstToolUseIndex : 0;
-  return [
-    ...payloadBlocks.slice(0, insertIndex),
-    ...thinkingBlocks,
-    ...payloadBlocks.slice(insertIndex),
-  ];
 }
 
-export function repairDeepSeekAnthropicThinkingReplayPayload(
-  payload: unknown,
-  context: Context,
-  model: Model<any>,
-): unknown {
-  if (!isRecord(payload)) return payload;
-  if (!isDeepSeekAnthropicReplayModel(model, payload)) return payload;
-  if (!hasEnabledAnthropicThinkingPayload(payload)) return payload;
-  if (!Array.isArray(payload.messages)) return payload;
+function flattenAnthropicPayloadToolBlocks(payload: unknown): unknown {
+  if (!isRecord(payload) || !Array.isArray(payload.messages)) return payload;
 
-  const sourceAssistants = context.messages.filter(
-    (message): message is AssistantMessage =>
-      message.role === "assistant" &&
-      message.stopReason !== "error" &&
-      message.stopReason !== "aborted",
-  );
-  let sourceIndex = 0;
   let changed = false;
-
   const messages = payload.messages.map((message) => {
-    if (!isRecord(message) || message.role !== "assistant") return message;
-    const sourceAssistant = sourceAssistants[sourceIndex];
-    sourceIndex += 1;
-    if (!sourceAssistant || !isSameAnthropicReplayAssistant(sourceAssistant, model)) {
-      return message;
-    }
-    if (!Array.isArray(message.content)) return message;
+    if (!isRecord(message) || !Array.isArray(message.content)) return message;
 
-    const hasToolUse = message.content.some(
-      (block) => isRecord(block) && block.type === "tool_use",
-    );
-    const hasThinking = message.content.some(
-      (block) => isRecord(block) && block.type === "thinking",
-    );
-    if (!hasToolUse || hasThinking) return message;
+    let messageChanged = false;
+    const content = message.content.map((block) => {
+      if (isAnthropicPayloadToolUseBlock(block)) {
+        changed = true;
+        messageChanged = true;
+        return { type: "text", text: anthropicPayloadToolUseToContextText(block) };
+      }
+      if (isAnthropicPayloadToolResultBlock(block)) {
+        changed = true;
+        messageChanged = true;
+        return { type: "text", text: anthropicPayloadToolResultToContextText(block) };
+      }
+      return block;
+    });
 
-    const replayThinkingBlocks = getDeepSeekReplayThinkingBlocks(sourceAssistant, message.content);
-    if (replayThinkingBlocks.length === 0) return message;
-
-    changed = true;
-    return {
-      ...message,
-      content: insertThinkingBeforeFirstToolUse(message.content, replayThinkingBlocks),
-    };
+    return messageChanged ? { ...message, content } : message;
   });
 
   return changed ? { ...payload, messages } : payload;
 }
 
-function attachDeepSeekAnthropicThinkingReplayRepair(
+function attachDeepSeekAnthropicPayloadToolBlockFlattening(
   options: StreamOptionsEx,
-  context: Context,
-  model: Model<any>,
-  thinking: AnthropicThinkingRuntime,
 ): StreamOptionsEx {
-  if (!thinking.thinkingEnabled || !isDeepSeekAnthropicReplayModel(model)) {
-    return options;
-  }
+  if (options.deepSeekAnthropicPayloadToolBlockFlattening) return options;
 
   const previousOnPayload = options.onPayload;
   return {
     ...options,
-    onPayload: async (payload, streamModel) => {
-      let nextPayload = repairDeepSeekAnthropicThinkingReplayPayload(payload, context, streamModel);
+    deepSeekDsmlToolCallRepair: true,
+    deepSeekAnthropicPayloadToolBlockFlattening: true,
+    onPayload: async (payload, model) => {
+      let nextPayload = payload;
       if (previousOnPayload) {
-        const overridden = await previousOnPayload(nextPayload, streamModel);
+        const overridden = await previousOnPayload(nextPayload, model);
         if (overridden !== undefined) {
           nextPayload = overridden;
         }
       }
-      return nextPayload;
+      return flattenAnthropicPayloadToolBlocks(nextPayload);
     },
   };
+}
+
+function shouldRepairDeepSeekAnthropicContext(model: Model<any>, options?: StreamOptionsEx) {
+  return Boolean(options?.deepSeekDsmlToolCallRepair) || isDeepSeekAnthropicModel(model);
 }
 
 function attachAnthropicThinkingPayloadOverride(
@@ -806,6 +817,307 @@ function hasAnthropicWebSearchTool(tool: unknown) {
   return name === "web_search" || type === "web_search_20260209" || type === "web_search_20250305";
 }
 
+function buildTextModeUnsupportedToolResult(toolCall: ToolCall): ToolResultMessage {
+  return {
+    role: "toolResult",
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    content: [
+      {
+        type: "text",
+        text: "Tool execution result is unavailable for this recovered tool call. Continue without using this tool and do not repeat raw tool-call markup.",
+      },
+    ],
+    details: { unsupportedTextModeTool: true },
+    isError: true,
+    timestamp: Date.now(),
+  };
+}
+
+function safeJsonForContext(value: unknown) {
+  try {
+    return JSON.stringify(value ?? {}, null, 2);
+  } catch {
+    return String(value ?? {});
+  }
+}
+
+function truncateContextText(value: string, maxLength = 8_000) {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}\n\n[truncated ${value.length - maxLength} chars]`;
+}
+
+function toolCallToContextText(toolCall: ToolCall) {
+  return truncateContextText(
+    [
+      "Previous assistant tool request:",
+      `tool_call_id: ${toolCall.id}`,
+      `tool_name: ${toolCall.name}`,
+      "arguments:",
+      safeJsonForContext(toolCall.arguments ?? {}),
+    ].join("\n"),
+  );
+}
+
+function toolResultToContextText(message: ToolResultMessage) {
+  const contentText = message.content
+    .map((block) => {
+      if (block.type === "text") return block.text;
+      if (block.type === "image") return "[image content omitted from textual DeepSeek context]";
+      return safeJsonForContext(block);
+    })
+    .filter((text) => text.trim())
+    .join("\n\n");
+
+  return truncateContextText(
+    [
+      "Previous tool execution result:",
+      `tool_call_id: ${message.toolCallId}`,
+      `tool_name: ${message.toolName}`,
+      `is_error: ${message.isError ? "true" : "false"}`,
+      "result:",
+      contentText || "(empty result)",
+    ].join("\n"),
+  );
+}
+
+function appendTextToUserMessage(message: Message, text: string): Message {
+  if (message.role !== "user") return message;
+  if (typeof message.content === "string") {
+    return {
+      ...message,
+      content: `${message.content}${message.content.trim() ? "\n\n" : ""}${text}`,
+    } as Message;
+  }
+  return {
+    ...message,
+    content: [...message.content, { type: "text", text }],
+  } as Message;
+}
+
+function flattenToolInteractionsForDeepSeekAnthropicContext(context: Context): Context {
+  const messages: Message[] = [];
+  let changed = false;
+
+  for (const message of context.messages) {
+    if (message.role === "toolResult") {
+      const text = toolResultToContextText(message);
+      const previous = messages[messages.length - 1];
+      if (previous?.role === "user") {
+        messages[messages.length - 1] = appendTextToUserMessage(previous, text);
+      } else {
+        messages.push({
+          role: "user",
+          content: [{ type: "text", text }],
+          timestamp: message.timestamp,
+        } as Message);
+      }
+      changed = true;
+      continue;
+    }
+
+    if (message.role !== "assistant") {
+      messages.push(message);
+      continue;
+    }
+
+    let messageChanged = false;
+    const nextContent = message.content.flatMap((block) => {
+      if (block.type !== "toolCall") return [block];
+      changed = true;
+      messageChanged = true;
+      return [{ type: "text" as const, text: toolCallToContextText(block) }];
+    });
+
+    if (nextContent.length === 0) {
+      changed = true;
+      continue;
+    }
+
+    messages.push(
+      messageChanged
+        ? ({
+            ...message,
+            content: nextContent,
+            stopReason: message.stopReason === "toolUse" ? "stop" : message.stopReason,
+          } as Message)
+        : message,
+    );
+  }
+
+  return changed ? { ...context, messages } : context;
+}
+
+function buildTextModeToolResultsForAssistant(
+  assistant: AssistantMessage,
+  hostedSearchBlocks: HostedSearchBlock[],
+): ToolResultMessage[] {
+  if (assistant.stopReason !== "toolUse") return [];
+  const toolCalls = assistant.content.filter(
+    (block): block is ToolCall => block.type === "toolCall",
+  );
+  return toolCalls.map((toolCall) =>
+    buildTextModeToolResultForToolCall(toolCall, hostedSearchBlocks),
+  );
+}
+
+function buildTextModeToolResultForToolCall(
+  toolCall: ToolCall,
+  hostedSearchBlocks: HostedSearchBlock[],
+): ToolResultMessage {
+  return isProviderNativeWebSearchToolCallName(toolCall.name)
+    ? buildProviderNativeWebSearchBridgeResult({
+        toolCall,
+        hostedSearchBlocks,
+        sourcesIntro: "Hosted search sources already captured in this response:",
+        fallbackText:
+          "No hosted search result was returned for this recovered request. Continue from existing context without repeating DSML markup.",
+      })
+    : buildTextModeUnsupportedToolResult(toolCall);
+}
+
+function isDeepSeekDsmlProviderNativeWebSearchToolCall(toolCall: ToolCall) {
+  return (
+    isDeepSeekDsmlRecoveredToolCallId(toolCall.id) &&
+    isProviderNativeWebSearchToolCallName(toolCall.name)
+  );
+}
+
+function findNextAssistantMessageIndex(messages: Context["messages"], startIndex: number) {
+  for (let index = startIndex; index < messages.length; index += 1) {
+    if (messages[index]?.role === "assistant") return index;
+  }
+  return messages.length;
+}
+
+function normalizeTextModeToolCallHistoryForDeepSeek(context: Context): Context {
+  const repairedMessages: Context["messages"] = [];
+  let changed = false;
+
+  for (let i = 0; i < context.messages.length; i += 1) {
+    const message = context.messages[i];
+
+    if (message.role === "toolResult") {
+      changed = true;
+      continue;
+    }
+
+    if (message.role !== "assistant") {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    const toolCalls = message.content.filter(
+      (block): block is ToolCall => block.type === "toolCall",
+    );
+    if (toolCalls.length === 0) {
+      repairedMessages.push(message);
+      continue;
+    }
+
+    if (message.stopReason === "error" || message.stopReason === "aborted") {
+      const assistantContent = message.content.filter((block) => block.type !== "toolCall");
+      changed = true;
+      if (assistantContent.length > 0) {
+        repairedMessages.push({
+          ...message,
+          content: assistantContent,
+          stopReason: "stop",
+        } as AssistantMessage);
+      }
+      continue;
+    }
+
+    const droppedToolCallIds = new Set(
+      toolCalls
+        .filter(isDeepSeekDsmlProviderNativeWebSearchToolCall)
+        .map((toolCall) => toolCall.id),
+    );
+    const retainedToolCalls = toolCalls.filter((toolCall) => !droppedToolCallIds.has(toolCall.id));
+    const assistantContent = message.content.filter(
+      (block) => !(block.type === "toolCall" && droppedToolCallIds.has(block.id)),
+    );
+    if (assistantContent.length !== message.content.length) {
+      changed = true;
+    }
+    if (assistantContent.length > 0) {
+      repairedMessages.push(
+        assistantContent.length === message.content.length
+          ? message
+          : ({
+              ...message,
+              content: assistantContent,
+              stopReason: retainedToolCalls.length > 0 ? "toolUse" : "stop",
+            } as AssistantMessage),
+      );
+    } else {
+      changed = true;
+    }
+
+    const segmentEnd = findNextAssistantMessageIndex(context.messages, i + 1);
+    const retainedToolCallIds = new Set(retainedToolCalls.map((toolCall) => toolCall.id));
+    const existingResultsById = new Map<string, ToolResultMessage>();
+    const consumedToolResultIndexes = new Set<number>();
+
+    for (let index = i + 1; index < segmentEnd; index += 1) {
+      const nextMessage = context.messages[index];
+      if (nextMessage?.role !== "toolResult") continue;
+      consumedToolResultIndexes.add(index);
+      if (droppedToolCallIds.has(nextMessage.toolCallId)) {
+        changed = true;
+        continue;
+      }
+      if (!retainedToolCallIds.has(nextMessage.toolCallId)) {
+        changed = true;
+        continue;
+      }
+      if (!existingResultsById.has(nextMessage.toolCallId)) {
+        existingResultsById.set(nextMessage.toolCallId, nextMessage);
+      } else {
+        changed = true;
+      }
+    }
+
+    const orderedToolResults = retainedToolCalls.map((toolCall) => {
+      const existing = existingResultsById.get(toolCall.id);
+      if (existing) return existing;
+      changed = true;
+      return buildTextModeToolResultForToolCall(toolCall, []);
+    });
+
+    if (orderedToolResults.length > 0) {
+      repairedMessages.push(...orderedToolResults);
+      const alreadyAdjacent = orderedToolResults.every((toolResult, offset) => {
+        const original = context.messages[i + 1 + offset];
+        return original === toolResult;
+      });
+      if (!alreadyAdjacent) {
+        changed = true;
+      }
+    }
+
+    for (let index = i + 1; index < segmentEnd; index += 1) {
+      if (consumedToolResultIndexes.has(index)) continue;
+      repairedMessages.push(context.messages[index]);
+    }
+
+    if (segmentEnd > i + 1) {
+      i = segmentEnd - 1;
+    }
+
+    if (droppedToolCallIds.size > 0 || retainedToolCalls.length !== toolCalls.length) {
+      changed = true;
+    }
+  }
+
+  return changed
+    ? {
+        ...context,
+        messages: repairedMessages,
+      }
+    : context;
+}
+
 function hasGeminiGoogleSearchTool(tool: unknown) {
   if (!isRecord(tool)) return false;
   return Boolean(tool.googleSearch || tool.google_search || tool.googleSearchRetrieval);
@@ -1089,6 +1401,18 @@ export function finalizeProviderStreamOptions(params: {
   options = attachProviderNativeWebSearch(params.providerId, options, params.nativeWebSearch, {
     baseUrl: params.baseUrl,
   });
+  const isDeepSeekAnthropic =
+    isDeepSeekAnthropicEndpoint({
+      api: params.model?.api,
+      baseUrl: params.baseUrl,
+      modelId: params.model?.id,
+    });
+  if (isDeepSeekAnthropic) {
+    options = {
+      ...options,
+      deepSeekDsmlToolCallRepair: true,
+    };
+  }
   if (params.context && params.model) {
     options = attachOpenAIResponsesNativeAttachments(options, {
       context: params.context,
@@ -1114,6 +1438,9 @@ export function finalizeProviderStreamOptions(params: {
       providerId: params.providerId,
       workdir: params.workdir,
     });
+  }
+  if (isDeepSeekAnthropic) {
+    options = attachDeepSeekAnthropicPayloadToolBlockFlattening(options);
   }
   return attachPayloadDebugLogging(options, params.debugLogger, params.extra);
 }
@@ -1592,17 +1919,21 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
     case "anthropic-messages": {
       // Anthropic：需要我们自己调用 streamAnthropic()，以便显式传 toolChoice（以及启用/禁用 thinking）。
       const anthropicThinking = resolveAnthropicThinkingRuntime(model, options);
-      let anthropicOptions = attachDeepSeekAnthropicThinkingReplayRepair(
+      const shouldRepairDeepSeekAnthropic = shouldRepairDeepSeekAnthropicContext(model, options);
+      const repairedAnthropicContext = shouldRepairDeepSeekAnthropic
+        ? normalizeTextModeToolCallHistoryForDeepSeek(context)
+        : context;
+      const anthropicContext = shouldRepairDeepSeekAnthropic
+        ? flattenToolInteractionsForDeepSeekAnthropicContext(repairedAnthropicContext)
+        : repairedAnthropicContext;
+      let anthropicOptions = attachAnthropicThinkingPayloadOverride(
         options,
-        context,
-        model,
         anthropicThinking,
       );
-      anthropicOptions = attachAnthropicThinkingPayloadOverride(
-        anthropicOptions,
-        anthropicThinking,
-      );
-      return streamAnthropic(model as any, context, {
+      if (shouldRepairDeepSeekAnthropic) {
+        anthropicOptions = attachDeepSeekAnthropicPayloadToolBlockFlattening(anthropicOptions);
+      }
+      const stream = streamAnthropic(model as any, anthropicContext, {
         temperature: anthropicOptions.temperature,
         maxTokens: anthropicThinking.maxTokens,
         signal: anthropicOptions.signal,
@@ -1620,6 +1951,9 @@ export function streamSimpleByApi(model: Model<any>, context: Context, options: 
           : {}),
         toolChoice: anthropicOptions.toolChoice ?? "none",
       });
+      return anthropicOptions.deepSeekDsmlToolCallRepair
+        ? wrapDeepSeekDsmlToolCallStream(stream)
+        : stream;
     }
     case "openai-completions": {
       const openAIOptions: OpenAICompletionsOptions = {
@@ -1841,48 +2175,70 @@ export async function streamAssistantMessage(params: {
       onRawEvent: hostedSearchAggregator.accept,
     });
     try {
-      const s = streamSimpleByApi(m, callContext, options);
-      const textReconciler = createStreamingTextReconciler();
+      let activeContext = callContext;
+      for (let toolRecoveryTurn = 0; toolRecoveryTurn < 4; toolRecoveryTurn += 1) {
+        const s = streamSimpleByApi(m, activeContext, options);
+        const textReconciler = createStreamingTextReconciler();
 
-      for await (const event of s) {
-        params.debugLogger?.logResponse(event);
-        if (event.type === "text_delta") {
-          const delta = textReconciler.appendDelta(String(event.contentIndex), event.delta);
-          if (delta) {
-            appendOrderedText(delta);
-            params.onTextDelta(delta);
-          }
-        } else if (event.type === "text_end") {
-          const delta = textReconciler.reconcileFinalText(
-            String(event.contentIndex),
-            event.content,
-          );
-          if (delta) {
-            appendOrderedText(delta);
-            params.onTextDelta(delta);
+        for await (const event of s) {
+          params.debugLogger?.logResponse(event);
+          if (event.type === "text_delta") {
+            const delta = textReconciler.appendDelta(String(event.contentIndex), event.delta);
+            if (delta) {
+              appendOrderedText(delta);
+              params.onTextDelta(delta);
+            }
+          } else if (event.type === "text_end") {
+            const delta = textReconciler.reconcileFinalText(
+              String(event.contentIndex),
+              event.content,
+            );
+            if (delta) {
+              appendOrderedText(delta);
+              params.onTextDelta(delta);
+            }
           }
         }
-      }
 
-      let final = await s.result();
-      if (final.stopReason === "error" || final.stopReason === "aborted") {
-        throw new Error(
-          normalizeErrorMessage(
-            final.errorMessage,
-            final.stopReason === "aborted" ? "Cancelled" : "Request failed",
-          ),
+        let final = await s.result();
+        if (final.stopReason === "error" || final.stopReason === "aborted") {
+          throw new Error(
+            normalizeErrorMessage(
+              final.errorMessage,
+              final.stopReason === "aborted" ? "Cancelled" : "Request failed",
+            ),
+          );
+        }
+
+        const textModeToolResults = buildTextModeToolResultsForAssistant(
+          final,
+          hostedSearchAggregator.getBlocks(),
         );
+        if (textModeToolResults.length > 0) {
+          params.debugLogger?.logResponse({
+            type: "text_mode_tool_result_recovery",
+            toolRecoveryTurn,
+            toolResults: textModeToolResults,
+          });
+          activeContext = {
+            ...activeContext,
+            messages: [...activeContext.messages, final, ...textModeToolResults],
+          };
+          continue;
+        }
+
+        await hostedSearchProbe.finish();
+        final = appendHostedSearchBlocksToAssistant(
+          final as AssistantMessage & { content: unknown[] },
+          hostedSearchAggregator.complete(),
+          { orderedBlocks },
+        ) as AssistantMessage;
+        params.debugLogger?.logResult(final);
+        await params.debugLogger?.flush();
+        return final;
       }
 
-      await hostedSearchProbe.finish();
-      final = appendHostedSearchBlocksToAssistant(
-        final as AssistantMessage & { content: unknown[] },
-        hostedSearchAggregator.complete(),
-        { orderedBlocks },
-      ) as AssistantMessage;
-      params.debugLogger?.logResult(final);
-      await params.debugLogger?.flush();
-      return final;
+      throw new Error("Too many text-mode tool-call recovery attempts");
     } catch (error) {
       await hostedSearchProbe.finish();
       if (params.signal?.aborted) {

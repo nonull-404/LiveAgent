@@ -7,6 +7,57 @@ const providers = loader.loadModule("src/lib/providers/llm.ts");
 const proxy = loader.loadModule("src/lib/providers/proxy.ts");
 const providerUtils = loader.loadModule("src/pages/settings/providerUtils.ts");
 
+function createMockAssistantStream() {
+  return {
+    async *[Symbol.asyncIterator]() {},
+    async result() {
+      return {
+        role: "assistant",
+        content: [],
+        api: "anthropic-messages",
+        provider: "anthropic",
+        model: "deepseek-v4-flash",
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+        stopReason: "stop",
+        timestamp: 1,
+      };
+    },
+  };
+}
+
+function createDeepSeekAnthropicModel(id = "deepseek-v4-flash") {
+  return {
+    id,
+    name: id,
+    api: "anthropic-messages",
+    provider: "anthropic",
+    baseUrl: "https://api.deepseek.com/anthropic",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 128000,
+    maxTokens: 4096,
+  };
+}
+
+function loadProvidersWithCapturedAnthropicStream() {
+  const state = {};
+  const localLoader = createTsModuleLoader({
+    mocks: {
+      "@earendil-works/pi-ai/anthropic": {
+        streamAnthropic(model, context, options) {
+          state.captured = { model, context, options };
+          return createMockAssistantStream();
+        },
+      },
+    },
+  });
+  return {
+    localProviders: localLoader.loadModule("src/lib/providers/llm.ts"),
+    state,
+  };
+}
+
 test("proxy base URL builder validates upstream URLs and carries origin separately", () => {
   assert.deepEqual(
     proxy.buildProxyBaseUrl("codex", "https://api.openai.com/v1/responses", "http://127.0.0.1:18080/"),
@@ -281,6 +332,178 @@ test("Codex Chat Completions streams forward reasoning effort", () => {
   assert.equal(captured.options.toolChoice, "auto");
 });
 
+test("DeepSeek Anthropic streamSimpleByApi strips aborted tool calls before conversion", () => {
+  const { localProviders, state } = loadProvidersWithCapturedAnthropicStream();
+  const model = createDeepSeekAnthropicModel();
+  const call = {
+    type: "toolCall",
+    id: "call_00_nLOhBvpTvol41FPkbuXA2605",
+    name: "web_search",
+    arguments: { query: "weibo-like-someone" },
+  };
+
+  const result = localProviders.streamSimpleByApi(
+    model,
+    {
+      messages: [
+        { role: "user", content: "search", timestamp: 1 },
+        {
+          role: "assistant",
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "deepseek-v4-flash",
+          content: [{ type: "text", text: "Searching" }, call],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+          stopReason: "aborted",
+          timestamp: 2,
+        },
+      ],
+    },
+    {},
+  );
+
+  assert.equal(typeof result.result, "function");
+  assert.deepEqual(
+    state.captured.context.messages[1].content.map((block) => block.type),
+    ["text"],
+  );
+  assert.equal(state.captured.context.messages[1].stopReason, "stop");
+});
+
+test("DeepSeek Anthropic streamSimpleByApi textualizes residual tool payload blocks without finalized options", async () => {
+  const { localProviders, state } = loadProvidersWithCapturedAnthropicStream();
+  const model = createDeepSeekAnthropicModel();
+
+  const result = localProviders.streamSimpleByApi(model, { messages: [] }, {});
+  assert.equal(typeof result.result, "function");
+  assert.equal(typeof state.captured.options.onPayload, "function");
+
+  const repaired = await state.captured.options.onPayload(
+    {
+      messages: [
+        { role: "user", content: "search" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Searching" },
+            {
+              type: "tool_use",
+              id: "call_00_uZnge7Q4VzkEWduraWXP2609",
+              name: "Read",
+              input: { path: "README.md" },
+            },
+          ],
+        },
+        { role: "user", content: "continue" },
+      ],
+    },
+    model,
+  );
+
+  assert.deepEqual(
+    repaired.messages[1].content.map((block) => block.type),
+    ["text", "text"],
+  );
+  assert.match(
+    repaired.messages[1].content[1].text,
+    /call_00_uZnge7Q4VzkEWduraWXP2609/,
+  );
+  assert.deepEqual(repaired.messages[2], {
+    role: "user",
+    content: "continue",
+  });
+  assert.equal(
+    repaired.messages.some((message) =>
+      message.content?.some?.(
+        (block) => block.type === "tool_use" || block.type === "tool_result",
+      ),
+    ),
+    false,
+  );
+});
+
+test("DeepSeek Anthropic streamSimpleByApi flattens completed multi-tool history", () => {
+  const { localProviders, state } = loadProvidersWithCapturedAnthropicStream();
+  const model = createDeepSeekAnthropicModel();
+  const bashA = {
+    type: "toolCall",
+    id: "call_00_ktXYHUFf9l425bsRQ5nv0526",
+    name: "Bash",
+    arguments: { command: "curl -s https://example.test/a" },
+  };
+  const bashB = {
+    type: "toolCall",
+    id: "call_01_ioRsTy54g6ycIuCEuFY52808",
+    name: "Bash",
+    arguments: { command: "curl -s https://example.test/b" },
+  };
+
+  const result = localProviders.streamSimpleByApi(
+    model,
+    {
+      messages: [
+        { role: "user", content: "search", timestamp: 1 },
+        {
+          role: "assistant",
+          api: "anthropic-messages",
+          provider: "anthropic",
+          model: "deepseek-v4-flash",
+          content: [
+            { type: "thinking", thinking: "Need more data", thinkingSignature: "sig-a" },
+            { type: "text", text: "I will fetch more files." },
+            bashA,
+            bashB,
+          ],
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
+          stopReason: "toolUse",
+          timestamp: 2,
+        },
+        {
+          role: "toolResult",
+          toolCallId: bashA.id,
+          toolName: "Bash",
+          content: [{ type: "text", text: "result a" }],
+          isError: false,
+          timestamp: 3,
+        },
+        {
+          role: "toolResult",
+          toolCallId: bashB.id,
+          toolName: "Bash",
+          content: [{ type: "text", text: "result b" }],
+          isError: false,
+          timestamp: 4,
+        },
+        { role: "user", content: "continue", timestamp: 5 },
+      ],
+    },
+    {},
+  );
+
+  assert.equal(typeof result.result, "function");
+  assert.equal(
+    state.captured.context.messages.some((message) => message.role === "toolResult"),
+    false,
+  );
+  assert.equal(
+    state.captured.context.messages.some(
+      (message) =>
+        message.role === "assistant" &&
+        message.content.some((block) => block.type === "toolCall"),
+    ),
+    false,
+  );
+  assert.equal(state.captured.context.messages[1].stopReason, "stop");
+  assert.match(
+    state.captured.context.messages[1].content.map((block) => block.text ?? "").join("\n"),
+    /call_00_ktXYHUFf9l425bsRQ5nv0526/,
+  );
+  assert.match(
+    state.captured.context.messages[2].content.map((block) => block.text ?? "").join("\n"),
+    /result b/,
+  );
+});
+
 test("gemini model base URL normalizes full generate endpoints", () => {
   const model = providers.createModelFromConfig(
     "gemini",
@@ -464,6 +687,163 @@ test("provider payload finalization enables native web search for hosted search 
   assert.deepEqual(geminiPayload.config.tools, [{ googleSearch: {} }]);
 });
 
+test("DeepSeek Anthropic endpoint enables DSML tool-call stream repair", () => {
+  const deepseekOptions = providers.finalizeProviderStreamOptions({
+    providerId: "claude_code",
+    baseUrl: "https://api.deepseek.com/anthropic",
+    options: {},
+    model: {
+      api: "anthropic-messages",
+      provider: "anthropic",
+      id: "deepseek-chat",
+    },
+  });
+  assert.equal(deepseekOptions.deepSeekDsmlToolCallRepair, true);
+  assert.equal(deepseekOptions.deepSeekAnthropicPayloadToolBlockFlattening, true);
+
+  const anthropicOptions = providers.finalizeProviderStreamOptions({
+    providerId: "claude_code",
+    baseUrl: "https://api.anthropic.com/v1",
+    options: {},
+    model: {
+      api: "anthropic-messages",
+      provider: "anthropic",
+      id: "claude-sonnet-4-5",
+    },
+  });
+  assert.equal(anthropicOptions.deepSeekDsmlToolCallRepair, undefined);
+});
+
+test("DeepSeek Anthropic payload flattening attaches from base URL even before model is known", async () => {
+  const options = providers.finalizeProviderStreamOptions({
+    providerId: "claude_code",
+    baseUrl: "https://api.deepseek.com/anthropic",
+    options: {},
+  });
+
+  assert.equal(options.deepSeekDsmlToolCallRepair, true);
+  assert.equal(options.deepSeekAnthropicPayloadToolBlockFlattening, true);
+  const flattened = await options.onPayload(
+    {
+      messages: [
+        { role: "user", content: "search" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Searching" },
+            {
+              type: "tool_use",
+              id: "call_00_nLOhBvpTvol41FPkbuXA2605",
+              name: "Read",
+              input: { path: "README.md" },
+            },
+          ],
+        },
+        { role: "user", content: "continue" },
+      ],
+    },
+    { api: "anthropic-messages", provider: "anthropic", id: "deepseek-v4-flash" },
+  );
+
+  assert.deepEqual(
+    flattened.messages[1].content.map((block) => block.type),
+    ["text", "text"],
+  );
+  assert.match(
+    flattened.messages[1].content[1].text,
+    /call_00_nLOhBvpTvol41FPkbuXA2605/,
+  );
+  assert.equal(
+    flattened.messages.some((message) =>
+      message.content?.some?.(
+        (block) => block.type === "tool_use" || block.type === "tool_result",
+      ),
+    ),
+    false,
+  );
+});
+
+test("DeepSeek Anthropic payload flattening converts mixed tool_use and tool_result blocks to text", async () => {
+  const options = providers.finalizeProviderStreamOptions({
+    providerId: "claude_code",
+    baseUrl: "https://api.deepseek.com/anthropic",
+    options: {},
+    model: {
+      api: "anthropic-messages",
+      provider: "anthropic",
+      id: "deepseek-v4-flash",
+    },
+  });
+
+  const flattened = await options.onPayload(
+    {
+      messages: [
+        { role: "user", content: "search" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "Searching" },
+            {
+              type: "tool_use",
+              id: "dsml-tool-call-023b41c5",
+              name: "builtin_web_search",
+              input: { additionalContext: "first query" },
+            },
+            {
+              type: "tool_use",
+              id: "call-read-1",
+              name: "Read",
+              input: { path: "README.md" },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "continue" },
+            {
+              type: "tool_result",
+              tool_use_id: "dsml-tool-call-68ce79de",
+              content: "late existing result",
+            },
+            {
+              type: "tool_result",
+              tool_use_id: "call-read-1",
+              content: "read result",
+            },
+          ],
+        },
+      ],
+    },
+    { api: "anthropic-messages", provider: "anthropic", id: "deepseek-chat" },
+  );
+
+  assert.deepEqual(
+    flattened.messages[1].content.map((block) => block.type),
+    ["text", "text", "text"],
+  );
+  assert.match(
+    flattened.messages[1].content[1].text,
+    /dsml-tool-call-023b41c5/,
+  );
+  assert.deepEqual(
+    flattened.messages[2].content.map((block) => block.type),
+    ["text", "text", "text"],
+  );
+  assert.match(
+    flattened.messages[2].content[2].text,
+    /read result/,
+  );
+  assert.equal(
+    flattened.messages.some((message) =>
+      message.content?.some?.(
+        (block) => block.type === "tool_use" || block.type === "tool_result",
+      ),
+    ),
+    false,
+  );
+});
+
 test("provider native web search avoids unsupported OpenAI minimal reasoning", async () => {
   const options = providers.finalizeProviderStreamOptions({
     providerId: "codex",
@@ -591,124 +971,6 @@ test("anthropic-compatible proxies get an explicit cache breakpoint on the last 
   assert.equal(payload.cache_control, undefined);
   assert.equal(payload.messages[0].content[0].cache_control, undefined);
   assert.deepEqual(payload.messages[0].content[1].cache_control, { type: "ephemeral" });
-});
-
-test("deepseek anthropic replay keeps empty thinking blocks before tool use", () => {
-  const context = {
-    messages: [
-      { role: "user", content: "inspect", timestamp: 1 },
-      {
-        role: "assistant",
-        api: "anthropic-messages",
-        provider: "anthropic",
-        model: "deepseek-v4-pro",
-        content: [
-          { type: "thinking", thinking: "", thinkingSignature: "sig-empty-thinking" },
-          {
-            type: "toolCall",
-            id: "call_1",
-            name: "Read",
-            arguments: { path: "README.md" },
-          },
-        ],
-        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
-        stopReason: "toolUse",
-        timestamp: 2,
-      },
-      {
-        role: "toolResult",
-        toolCallId: "call_1",
-        toolName: "Read",
-        content: [{ type: "text", text: "ok" }],
-        isError: false,
-        timestamp: 3,
-      },
-    ],
-  };
-  const payload = {
-    model: "deepseek-v4-pro",
-    thinking: { type: "enabled", budget_tokens: 8192 },
-    messages: [
-      { role: "user", content: "inspect" },
-      {
-        role: "assistant",
-        content: [
-          {
-            type: "tool_use",
-            id: "call_1",
-            name: "Read",
-            input: { path: "README.md" },
-          },
-        ],
-      },
-      {
-        role: "user",
-        content: [{ type: "tool_result", tool_use_id: "call_1", content: "ok" }],
-      },
-    ],
-  };
-
-  const repaired = providers.repairDeepSeekAnthropicThinkingReplayPayload(
-    payload,
-    context,
-    {
-      id: "deepseek-v4-pro",
-      api: "anthropic-messages",
-      provider: "anthropic",
-      baseUrl: "https://proxy.example.com",
-    },
-  );
-
-  assert.deepEqual(repaired.messages[1].content, [
-    { type: "thinking", thinking: "", signature: "sig-empty-thinking" },
-    {
-      type: "tool_use",
-      id: "call_1",
-      name: "Read",
-      input: { path: "README.md" },
-    },
-  ]);
-});
-
-test("deepseek anthropic replay repair leaves non-deepseek payloads untouched", () => {
-  const payload = {
-    model: "claude-sonnet-4-5",
-    thinking: { type: "enabled", budget_tokens: 8192 },
-    messages: [
-      {
-        role: "assistant",
-        content: [{ type: "tool_use", id: "call_1", name: "Read", input: {} }],
-      },
-    ],
-  };
-  const repaired = providers.repairDeepSeekAnthropicThinkingReplayPayload(
-    payload,
-    {
-      messages: [
-        {
-          role: "assistant",
-          api: "anthropic-messages",
-          provider: "anthropic",
-          model: "claude-sonnet-4-5",
-          content: [
-            { type: "thinking", thinking: "", thinkingSignature: "sig" },
-            { type: "toolCall", id: "call_1", name: "Read", arguments: {} },
-          ],
-          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 },
-          stopReason: "toolUse",
-          timestamp: 1,
-        },
-      ],
-    },
-    {
-      id: "claude-sonnet-4-5",
-      api: "anthropic-messages",
-      provider: "anthropic",
-      baseUrl: "https://api.anthropic.com",
-    },
-  );
-
-  assert.equal(repaired, payload);
 });
 
 test("streaming text reconciler emits only missing final text suffixes", () => {

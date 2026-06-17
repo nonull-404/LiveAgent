@@ -255,6 +255,54 @@ test("UI message builder preserves provider hosted search blocks", () => {
   assert.equal(ui[1].text, "found it");
 });
 
+test("UI message builder hides provider-native web_search tool traces when hosted search exists", () => {
+  const webSearchCall = {
+    type: "toolCall",
+    id: "dsml-tool-call-search-1",
+    name: "web_search",
+    arguments: { query: "LiveAgent DeepSeek search" },
+  };
+  const messages = [
+    { role: "user", content: "search", timestamp: 1 },
+    {
+      role: "assistant",
+      content: [
+        { type: "text", text: "searching" },
+        {
+          type: "hostedSearch",
+          id: "search-1",
+          provider: "claude_code",
+          status: "completed",
+          queries: ["LiveAgent DeepSeek search"],
+          sources: [{ url: "https://example.com/result", title: "Result" }],
+        },
+        webSearchCall,
+      ],
+      provider: "claude_code",
+      model: "deepseek-v4-flash",
+      api: "anthropic-messages",
+      stopReason: "toolUse",
+      timestamp: 2,
+    },
+    {
+      role: "toolResult",
+      toolCallId: webSearchCall.id,
+      toolName: webSearchCall.name,
+      content: [{ type: "text", text: "Tool web_search not found" }],
+      details: {},
+      isError: true,
+      timestamp: 3,
+    },
+  ];
+
+  const ui = uiMessages.buildUiMessages(messages);
+  const round = ui[1].rounds[0];
+
+  assert.equal(round.blocks.some((block) => block.kind === "tool"), false);
+  assert.equal(uiMessages.getRoundHostedSearches(round).length, 1);
+  assert.equal(uiMessages.getRoundToolTrace(round).length, 0);
+});
+
 test("hosted search finalization preserves streaming block order", () => {
   const searchA = {
     type: "hostedSearch",
@@ -1162,8 +1210,14 @@ test("round update helpers append deltas, upsert tools, and collapse completed t
     queries: ["live query"],
     sources: [],
   });
+  const withHiddenProviderSearch = uiMessages.upsertToolCallToRound(withHostedSearch, {
+    type: "toolCall",
+    id: "dsml-tool-call-live-search",
+    name: "builtin_web_search",
+    arguments: { additionalContext: "live query" },
+  });
   const toolCall = { type: "toolCall", id: "call-1", name: "Edit", arguments: { path: "a.txt" } };
-  const withTool = uiMessages.upsertToolCallToRound(withHostedSearch, toolCall);
+  const withTool = uiMessages.upsertToolCallToRound(withHiddenProviderSearch, toolCall);
   const withToolResult = uiMessages.attachToolResultToRound(withTool, toolCall, {
     role: "toolResult",
     toolCallId: "call-1",
@@ -1177,6 +1231,10 @@ test("round update helpers append deltas, upsert tools, and collapse completed t
   assert.equal(uiMessages.getRoundThinkingText(withToolResult), "plan");
   assert.deepEqual(
     withHostedSearch.blocks.map((block) => block.kind),
+    ["thinking", "text", "hostedSearch"],
+  );
+  assert.deepEqual(
+    withHiddenProviderSearch.blocks.map((block) => block.kind),
     ["thinking", "text", "hostedSearch"],
   );
   assert.equal(uiMessages.getRoundHostedSearches(withToolResult).length, 1);

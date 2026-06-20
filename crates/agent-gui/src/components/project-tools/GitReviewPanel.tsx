@@ -486,7 +486,7 @@ function chooseDiffHorizontalScrollTarget(
   return bestTarget;
 }
 
-function isProjectToolsPanelResizing(root: HTMLElement | null) {
+function isRightDockPanelResizing(root: HTMLElement | null) {
   return Boolean(root?.closest('[data-project-tools-resizing="true"]'));
 }
 
@@ -1388,7 +1388,7 @@ function DiffContent(props: {
 
   const updateDiffHorizontalScrollbar = useCallback(() => {
     const root = rootRef.current;
-    if (isProjectToolsPanelResizing(root)) return;
+    if (isRightDockPanelResizing(root)) return;
 
     const trackWidth =
       diffHorizontalScrollbarTrackRef.current?.clientWidth ??

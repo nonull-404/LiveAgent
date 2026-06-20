@@ -1,9 +1,6 @@
 import {
   normalizeChatRuntimeControls,
-  normalizeProjectToolsFileTreeSettings,
-  normalizeProjectToolsGitReviewSettings,
-  normalizeProjectToolsSshTunnelSettings,
-  normalizeProjectToolsTunnelSettings,
+  normalizeRightDockSettings,
   normalizeSettings,
   workspaceProjectPathKey,
   type AppSettings,
@@ -22,10 +19,7 @@ export type GatewaySshSecretUpdates = Record<
 export type GatewaySettingsSyncProvider = Omit<AppSettings["customProviders"][number], "apiKey"> & {
   apiKeyConfigured?: boolean;
 };
-export type GatewaySettingsSyncCustomSettings = Omit<
-  Partial<AppSettings["customSettings"]>,
-  "projectToolsPanel"
->;
+export type GatewaySettingsSyncCustomSettings = Partial<AppSettings["customSettings"]>;
 
 export type GatewaySettingsSyncPayload = {
   system: AppSettings["system"];
@@ -183,9 +177,8 @@ function redactSshSettingsForGateway(ssh: AppSettings["ssh"]): AppSettings["ssh"
 function syncableCustomSettings(
   customSettings: AppSettings["customSettings"],
 ): GatewaySettingsSyncCustomSettings {
-  const { projectToolsPanel: _projectToolsPanel, ...syncable } = customSettings;
   return {
-    ...syncable,
+    ...customSettings,
     chatSidebar: {
       projectsCollapsed: false,
       recentCollapsed: false,
@@ -475,90 +468,36 @@ function mergeSyncedSshSettings(
   };
 }
 
-function mergeSyncedProjectToolsFileTreeSettings(
-  current: AppSettings["customSettings"]["projectToolsFileTree"],
+function mergeSyncedRightDockSettings(
+  current: AppSettings["customSettings"]["rightDock"],
   incoming: unknown,
-): AppSettings["customSettings"]["projectToolsFileTree"] {
-  const currentState = normalizeProjectToolsFileTreeSettings(current);
-  const incomingState = normalizeProjectToolsFileTreeSettings(incoming);
-  const openFromIncoming = incomingState.openVersion >= currentState.openVersion;
-  const incomingOpenProjectPathKeys = new Set(incomingState.openProjectPathKeys);
-  const projects: AppSettings["customSettings"]["projectToolsFileTree"]["projects"] = {
+): AppSettings["customSettings"]["rightDock"] {
+  const currentState = normalizeRightDockSettings(current);
+  const incomingState = normalizeRightDockSettings(incoming);
+  const projects: AppSettings["customSettings"]["rightDock"]["projects"] = {
     ...currentState.projects,
   };
 
   for (const [pathKey, incomingProject] of Object.entries(incomingState.projects)) {
     const currentProject = projects[pathKey];
     if (!currentProject) {
-      if (openFromIncoming && incomingOpenProjectPathKeys.has(pathKey)) {
-        projects[pathKey] = incomingProject;
-      }
+      projects[pathKey] = incomingProject;
       continue;
     }
-    const uiSource =
-      incomingProject.stateVersion >= currentProject.stateVersion
-        ? incomingProject
-        : currentProject;
+    const source =
+      incomingProject.stateVersion >= currentProject.stateVersion ? incomingProject : currentProject;
     projects[pathKey] = {
-      query: uiSource.query,
-      selectedPath: uiSource.selectedPath,
-      expandedPaths: uiSource.expandedPaths,
+      activeTabId: source.activeTabId,
+      tabOrder: source.tabOrder,
+      tabs: source.tabs,
+      openVersion: Math.max(currentProject.openVersion, incomingProject.openVersion),
       stateVersion: Math.max(currentProject.stateVersion, incomingProject.stateVersion),
-      revision: Math.max(currentProject.revision, incomingProject.revision),
     };
   }
 
   return {
-    openProjectPathKeys: openFromIncoming
-      ? incomingState.openProjectPathKeys
-      : currentState.openProjectPathKeys,
-    openVersion: Math.max(currentState.openVersion, incomingState.openVersion),
+    width: currentState.width,
     projects,
-  };
-}
-
-function mergeSyncedProjectToolsGitReviewSettings(
-  current: AppSettings["customSettings"]["projectToolsGitReview"],
-  incoming: unknown,
-): AppSettings["customSettings"]["projectToolsGitReview"] {
-  const currentState = normalizeProjectToolsGitReviewSettings(current);
-  const incomingState = normalizeProjectToolsGitReviewSettings(incoming);
-  const openFromIncoming = incomingState.openVersion >= currentState.openVersion;
-  return {
-    openProjectPathKeys: openFromIncoming
-      ? incomingState.openProjectPathKeys
-      : currentState.openProjectPathKeys,
-    openVersion: Math.max(currentState.openVersion, incomingState.openVersion),
-  };
-}
-
-function mergeSyncedProjectToolsTunnelSettings(
-  current: AppSettings["customSettings"]["projectToolsTunnel"],
-  incoming: unknown,
-): AppSettings["customSettings"]["projectToolsTunnel"] {
-  const currentState = normalizeProjectToolsTunnelSettings(current);
-  const incomingState = normalizeProjectToolsTunnelSettings(incoming);
-  const openFromIncoming = incomingState.openVersion >= currentState.openVersion;
-  return {
-    openProjectPathKeys: openFromIncoming
-      ? incomingState.openProjectPathKeys
-      : currentState.openProjectPathKeys,
-    openVersion: Math.max(currentState.openVersion, incomingState.openVersion),
-  };
-}
-
-function mergeSyncedProjectToolsSshTunnelSettings(
-  current: AppSettings["customSettings"]["projectToolsSshTunnel"],
-  incoming: unknown,
-): AppSettings["customSettings"]["projectToolsSshTunnel"] {
-  const currentState = normalizeProjectToolsSshTunnelSettings(current);
-  const incomingState = normalizeProjectToolsSshTunnelSettings(incoming);
-  const openFromIncoming = incomingState.openVersion >= currentState.openVersion;
-  return {
-    openProjectPathKeys: openFromIncoming
-      ? incomingState.openProjectPathKeys
-      : currentState.openProjectPathKeys,
-    openVersion: Math.max(currentState.openVersion, incomingState.openVersion),
   };
 }
 
@@ -670,44 +609,13 @@ export function applyGatewaySettingsSyncPayload(
     memory: memory as AppSettings["memory"],
     customSettings: {
       ...incomingCustomSettings,
-      projectToolsFileTree: Object.prototype.hasOwnProperty.call(
-        incomingCustomSettings,
-        "projectToolsFileTree",
-      )
-        ? mergeSyncedProjectToolsFileTreeSettings(
-            current.customSettings.projectToolsFileTree,
-            incomingCustomSettings.projectToolsFileTree,
+      rightDock: Object.prototype.hasOwnProperty.call(incomingCustomSettings, "rightDock")
+        ? mergeSyncedRightDockSettings(
+            current.customSettings.rightDock,
+            incomingCustomSettings.rightDock,
           )
-        : current.customSettings.projectToolsFileTree,
-      projectToolsGitReview: Object.prototype.hasOwnProperty.call(
-        incomingCustomSettings,
-        "projectToolsGitReview",
-      )
-        ? mergeSyncedProjectToolsGitReviewSettings(
-            current.customSettings.projectToolsGitReview,
-            incomingCustomSettings.projectToolsGitReview,
-          )
-        : current.customSettings.projectToolsGitReview,
-      projectToolsTunnel: Object.prototype.hasOwnProperty.call(
-        incomingCustomSettings,
-        "projectToolsTunnel",
-      )
-        ? mergeSyncedProjectToolsTunnelSettings(
-            current.customSettings.projectToolsTunnel,
-            incomingCustomSettings.projectToolsTunnel,
-          )
-        : current.customSettings.projectToolsTunnel,
-      projectToolsSshTunnel: Object.prototype.hasOwnProperty.call(
-        incomingCustomSettings,
-        "projectToolsSshTunnel",
-      )
-        ? mergeSyncedProjectToolsSshTunnelSettings(
-            current.customSettings.projectToolsSshTunnel,
-            incomingCustomSettings.projectToolsSshTunnel,
-          )
-        : current.customSettings.projectToolsSshTunnel,
+        : current.customSettings.rightDock,
       chatSidebar: current.customSettings.chatSidebar,
-      projectToolsPanel: current.customSettings.projectToolsPanel,
     },
     skills: (source.skills as AppSettings["skills"] | undefined) ?? current.skills,
     chatRuntimeControls: Object.prototype.hasOwnProperty.call(source, "chatRuntimeControls")

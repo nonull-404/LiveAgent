@@ -29,7 +29,7 @@ import { mergePendingUploadedFiles, withPastedTextDisplayMetadata } from "@/lib/
 import { registerLocalUploadedImagePreviews } from "@/lib/chat/uploadedImagePreview";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ProjectToolsPanel } from "@/components/project-tools/ProjectToolsPanel";
+import { RightDockPanel } from "@/components/project-tools/RightDockPanel";
 import type { WorkspaceCodeEditorOpenRequest } from "@/components/workspace-editor/WorkspaceCodeEditorOverlay";
 import type { WorkspaceSshTerminalOpenRequest } from "@/components/workspace-editor/WorkspaceSshTerminalOverlay";
 import type { WorkspaceImagePreviewOpenRequest } from "@/components/workspace-editor/WorkspaceImagePreviewOverlay";
@@ -65,29 +65,22 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import {
   findProviderModelConfig,
   getChatRuntimeReasoningLevelsForProvider,
-  getProjectToolsFileTreeProjectState,
-  getProjectToolsPanelActiveTab,
-  getProjectToolsPanelTabOrder,
+  getRightDockFileTreeState,
+  getRightDockProjectState,
   getSshProjectHostIds,
   isAgentDevMode,
-  isProjectToolsFileTreeOpen,
-  isProjectToolsGitReviewOpen,
-  isProjectToolsSshTunnelOpen,
-  isProjectToolsTunnelOpen,
+  isRightDockSingletonTabOpen,
   normalizeChatRuntimeControlsForProvider,
   normalizeSettings,
-  removeProjectToolsProjectState,
+  openRightDockSingletonTab,
+  removeRightDockProjectState,
   resolveWorkspaceProjects,
   workspaceProjectPathKey,
   updateChatRuntimeControlsForProvider,
   updateCustomSettings,
-  updateProjectToolsFileTreeProjectState,
-  updateProjectToolsFileTreeOpen,
-  updateProjectToolsGitReviewOpen,
-  updateProjectToolsSshTunnelOpen,
-  updateProjectToolsTunnelOpen,
-  updateProjectToolsPanelActiveTab,
-  updateProjectToolsPanelTabOrder,
+  updateRightDockFileTreeState,
+  updateRightDockProjectState,
+  updateRightDockWidth,
   updateSshProjectHostIds,
   type AppSettings,
   type ChatRuntimeControls,
@@ -969,9 +962,9 @@ export default function App() {
   const [isUploadingFiles, setIsUploadingFiles] = useState(false);
   const [isFileDropActive, setIsFileDropActive] = useState(false);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
-  const [projectToolsPanelOpen, setProjectToolsPanelOpen] = useState(false);
+  const [rightDockOpen, setRightDockOpen] = useState(false);
   const [tunnelRefreshToken, setTunnelRefreshToken] = useState(0);
-  const previousProjectToolsFileTreeOpenRef = useRef(false);
+  const previousRightDockFileTreeOpenRef = useRef(false);
   const [workspaceEditorMounted, setWorkspaceEditorMounted] = useState(false);
   const [workspaceEditorOpen, setWorkspaceEditorOpen] = useState(false);
   const [workspaceEditorCleanupPending, setWorkspaceEditorCleanupPending] = useState(false);
@@ -2242,7 +2235,9 @@ export default function App() {
   const setSettings = useCallback(
     (updater: (prev: AppSettings) => AppSettings) => {
       setSettingsState((prev) => {
-        const rawNext = resolveAppWorkspaceProjects(normalizeSettings(updater(prev)));
+        const updated = updater(prev);
+        if (updated === prev) return prev;
+        const rawNext = resolveAppWorkspaceProjects(normalizeSettings(updated));
         const next = redactSettingsForWebStorage(rawNext);
         queueSettingsSave(
           prev,
@@ -2262,13 +2257,7 @@ export default function App() {
         workspaceProjectPathKey(projectPathKey) ||
         workspaceProjectPathKey(activeWorkspaceProjectPath);
       if (!targetProjectPathKey) return;
-      setSettings((prev) =>
-        updateProjectToolsTunnelOpen(
-          updateProjectToolsPanelActiveTab(prev, targetProjectPathKey, "tunnel"),
-          targetProjectPathKey,
-          true,
-        ),
-      );
+      setSettings((prev) => openRightDockSingletonTab(prev, targetProjectPathKey, "tunnel"));
     },
     [activeWorkspaceProjectPath, setSettings],
   );
@@ -2494,15 +2483,9 @@ export default function App() {
         setSidebarOpen(false);
       }
       setActiveView("chat");
-      setProjectToolsPanelOpen(true);
+      setRightDockOpen(true);
       activateWorkspaceProject(project);
-      setSettings((prev) =>
-        updateProjectToolsFileTreeOpen(
-          updateProjectToolsPanelActiveTab(prev, pathKey, "fileTree"),
-          pathKey,
-          true,
-        ),
-      );
+      setSettings((prev) => openRightDockSingletonTab(prev, pathKey, "fileTree"));
     },
     [activateWorkspaceProject, checkWorkspaceProjectDirectory, setSettings],
   );
@@ -4769,7 +4752,7 @@ export default function App() {
             getDefaultWorkspaceProjectPath(prev.system),
           ),
         };
-        return removeProjectToolsProjectState(nextSettings, pathKey);
+        return removeRightDockProjectState(nextSettings, pathKey);
       });
       setProjectRenamingId((current) => (current === project.id ? null : current));
       setProjectRenameDraft("");
@@ -4959,7 +4942,7 @@ export default function App() {
             pruneProjectTerminalSessions();
           }
           if (pathKey && workspaceProjectPathKey(activeWorkspaceProjectPath) === pathKey) {
-            setProjectToolsPanelOpen(false);
+            setRightDockOpen(false);
             if (terminalSessionsToClose.length === 0) {
               pruneProjectTerminalSessions();
             }
@@ -5076,7 +5059,7 @@ export default function App() {
   }
 
   function handleSidebarOpenSkillsHub() {
-    setProjectToolsPanelOpen(false);
+    setRightDockOpen(false);
     if (isMobileSidebarLayout()) {
       setSidebarOpen(false);
     }
@@ -5085,7 +5068,7 @@ export default function App() {
   }
 
   function handleSidebarOpenMcpHub() {
-    setProjectToolsPanelOpen(false);
+    setRightDockOpen(false);
     if (isMobileSidebarLayout()) {
       setSidebarOpen(false);
     }
@@ -6029,17 +6012,24 @@ export default function App() {
   const terminalProjectPathKey = terminalProjectPath
     ? workspaceProjectPathKey(terminalProjectPath)
     : "";
-  const projectToolsFileTreeOpen = isProjectToolsFileTreeOpen(
+  const rightDockProjectState = getRightDockProjectState(
     settings.customSettings,
     terminalProjectPathKey,
   );
-  const projectToolsTunnelOpen = isProjectToolsTunnelOpen(
+  const rightDockFileTreeOpen = isRightDockSingletonTabOpen(
     settings.customSettings,
     terminalProjectPathKey,
+    "fileTree",
   );
-  const projectToolsSshTunnelOpen = isProjectToolsSshTunnelOpen(
+  const rightDockTunnelOpen = isRightDockSingletonTabOpen(
     settings.customSettings,
     terminalProjectPathKey,
+    "tunnel",
+  );
+  const rightDockSshTunnelOpen = isRightDockSingletonTabOpen(
+    settings.customSettings,
+    terminalProjectPathKey,
+    "sshTunnel",
   );
   const associatedSshHostIds = getSshProjectHostIds(settings.ssh, terminalProjectPathKey);
   const projectToolsDisabledMessage = !settingsSyncReady
@@ -6136,21 +6126,21 @@ export default function App() {
     setWorkspaceImagePreviewOpenRequest(null);
   }, []);
   useEffect(() => {
-    const previousOpen = previousProjectToolsFileTreeOpenRef.current;
-    previousProjectToolsFileTreeOpenRef.current = projectToolsFileTreeOpen;
-    if (projectToolsFileTreeOpen && workspaceEditorCleanupPending) {
+    const previousOpen = previousRightDockFileTreeOpenRef.current;
+    previousRightDockFileTreeOpenRef.current = rightDockFileTreeOpen;
+    if (rightDockFileTreeOpen && workspaceEditorCleanupPending) {
       setWorkspaceEditorCleanupPending(false);
     }
-    if (previousOpen && !projectToolsFileTreeOpen && workspaceEditorMounted) {
+    if (previousOpen && !rightDockFileTreeOpen && workspaceEditorMounted) {
       setWorkspaceEditorCleanupPending(true);
       setWorkspaceEditorOpen(true);
       requestWorkspaceEditorClose();
     }
-    if (previousOpen && !projectToolsFileTreeOpen && workspaceImagePreviewMounted) {
+    if (previousOpen && !rightDockFileTreeOpen && workspaceImagePreviewMounted) {
       requestWorkspaceImagePreviewClose();
     }
   }, [
-    projectToolsFileTreeOpen,
+    rightDockFileTreeOpen,
     requestWorkspaceEditorClose,
     requestWorkspaceImagePreviewClose,
     workspaceEditorCleanupPending,
@@ -6235,7 +6225,7 @@ export default function App() {
     if (!terminalClient) return;
     if (!settingsSyncReady) return;
     if (!isAgentMode || !webTerminalSessionsEnabled || status?.online !== true) return;
-    if (!projectToolsSshTunnelOpen || !terminalProjectPathKey) return;
+    if (!rightDockSshTunnelOpen || !terminalProjectPathKey) return;
 
     let cancelled = false;
     let refreshSeq = 0;
@@ -6261,7 +6251,7 @@ export default function App() {
     };
   }, [
     isAgentMode,
-    projectToolsSshTunnelOpen,
+    rightDockSshTunnelOpen,
     settingsSyncReady,
     status?.online,
     terminalClient,
@@ -6888,19 +6878,19 @@ export default function App() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => setProjectToolsPanelOpen((open) => !open)}
-                        disabled={Boolean(projectToolsDisabledMessage) && !projectToolsPanelOpen}
-                        aria-expanded={projectToolsPanelOpen}
+                        onClick={() => setRightDockOpen((open) => !open)}
+                        disabled={Boolean(projectToolsDisabledMessage) && !rightDockOpen}
+                        aria-expanded={rightDockOpen}
                         title={
-                          projectToolsPanelOpen
+                          rightDockOpen
                             ? "Collapse project tools panel"
                             : (projectToolsDisabledMessage ?? "Expand project tools panel")
                         }
                         className={`gateway-project-tools-panel-toggle relative h-8 w-8 rounded-lg text-muted-foreground transition-[background-color,color,transform] duration-150 hover:text-foreground active:scale-95 ${
-                          projectToolsPanelOpen ? "bg-muted text-foreground" : ""
+                          rightDockOpen ? "bg-muted text-foreground" : ""
                         }`}
                       >
-                        {projectToolsPanelOpen ? (
+                        {rightDockOpen ? (
                           <PanelRightClose className="h-4.5 w-4.5" />
                         ) : (
                           <PanelRightOpen className="h-4.5 w-4.5" />
@@ -7273,32 +7263,21 @@ export default function App() {
         </div>
 
         {terminalClient ? (
-          <ProjectToolsPanel
-            isOpen={activeView === "chat" && projectToolsPanelOpen}
+          <RightDockPanel
+            isOpen={activeView === "chat" && rightDockOpen}
             collapseImmediately={activeView !== "chat"}
             projectPathKey={terminalProjectPathKey}
             cwd={terminalProjectPath}
             sessions={terminalSessions}
-            width={settings.customSettings.projectToolsPanel.width}
+            width={settings.customSettings.rightDock.width}
             theme={settings.theme}
             disabledMessage={projectToolsDisabledMessage}
             terminalDisabledMessage={terminalDisabledMessage}
-            activeTab={getProjectToolsPanelActiveTab(
+            projectState={rightDockProjectState}
+            fileTreeState={getRightDockFileTreeState(
               settings.customSettings,
               terminalProjectPathKey,
             )}
-            tabOrder={getProjectToolsPanelTabOrder(settings.customSettings, terminalProjectPathKey)}
-            fileTreeOpen={projectToolsFileTreeOpen}
-            fileTreeState={getProjectToolsFileTreeProjectState(
-              settings.customSettings,
-              terminalProjectPathKey,
-            )}
-            gitReviewOpen={isProjectToolsGitReviewOpen(
-              settings.customSettings,
-              terminalProjectPathKey,
-            )}
-            tunnelOpen={projectToolsTunnelOpen}
-            sshTunnelOpen={projectToolsSshTunnelOpen}
             sshHosts={settings.ssh.hosts}
             associatedSshHostIds={associatedSshHostIds}
             client={terminalClient}
@@ -7310,46 +7289,14 @@ export default function App() {
             tunnelDisabledMessage={tunnelDisabledMessage}
             tunnelRefreshToken={tunnelRefreshToken}
             onWidthChange={(nextWidth) =>
-              setSettings((prev) =>
-                updateCustomSettings(prev, {
-                  projectToolsPanel: {
-                    ...prev.customSettings.projectToolsPanel,
-                    width: nextWidth,
-                  },
-                }),
-              )
+              setSettings((prev) => updateRightDockWidth(prev, nextWidth))
             }
-            onActiveTabChange={(activeTab) =>
-              setSettings((prev) =>
-                updateProjectToolsPanelActiveTab(prev, terminalProjectPathKey, activeTab),
-              )
+            onProjectStateChange={(updater) =>
+              setSettings((prev) => updateRightDockProjectState(prev, terminalProjectPathKey, updater))
             }
-            onTabOrderChange={(tabOrder) =>
-              setSettings((prev) =>
-                updateProjectToolsPanelTabOrder(prev, terminalProjectPathKey, tabOrder),
-              )
-            }
-            onFileTreeOpenChange={(open) => {
-              setSettings((prev) =>
-                updateProjectToolsFileTreeOpen(prev, terminalProjectPathKey, open),
-              );
-            }}
             onFileTreeStateChange={(patch) =>
               setSettings((prev) =>
-                updateProjectToolsFileTreeProjectState(prev, terminalProjectPathKey, patch),
-              )
-            }
-            onGitReviewOpenChange={(open) =>
-              setSettings((prev) =>
-                updateProjectToolsGitReviewOpen(prev, terminalProjectPathKey, open),
-              )
-            }
-            onTunnelOpenChange={(open) =>
-              setSettings((prev) => updateProjectToolsTunnelOpen(prev, terminalProjectPathKey, open))
-            }
-            onSshTunnelOpenChange={(open) =>
-              setSettings((prev) =>
-                updateProjectToolsSshTunnelOpen(prev, terminalProjectPathKey, open),
+                updateRightDockFileTreeState(prev, terminalProjectPathKey, patch),
               )
             }
             onSshProjectHostIdsChange={(hostIds) =>
@@ -7370,7 +7317,7 @@ export default function App() {
               composerRef.current?.insertGitFileMention(file);
               composerRef.current?.focus();
             }}
-            onClose={() => setProjectToolsPanelOpen(false)}
+            onClose={() => setRightDockOpen(false)}
           />
         ) : null}
 

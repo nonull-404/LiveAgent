@@ -32,7 +32,7 @@ import type {
   TunnelSummary,
   TunnelUpdateInput,
 } from "../components/project-tools/LocalTunnelPanel";
-import { ProjectToolsPanel } from "../components/project-tools/ProjectToolsPanel";
+import { RightDockPanel } from "../components/project-tools/RightDockPanel";
 import { Button } from "../components/ui/button";
 import { useConfirmDialog } from "../components/ui/confirm-dialog";
 import type { WorkspaceCodeEditorOpenRequest } from "../components/workspace-editor/WorkspaceCodeEditorOverlay";
@@ -120,18 +120,15 @@ import {
   type ExecutionMode,
   findProviderModelConfig,
   getChatRuntimeReasoningLevelsForProvider,
-  getProjectToolsFileTreeProjectState,
-  getProjectToolsPanelActiveTab,
-  getProjectToolsPanelTabOrder,
+  getRightDockFileTreeState,
+  getRightDockProjectState,
   getSshProjectHostIds,
   isAgentDevMode,
   isAgentExecutionMode,
-  isProjectToolsFileTreeOpen,
-  isProjectToolsGitReviewOpen,
-  isProjectToolsSshTunnelOpen,
-  isProjectToolsTunnelOpen,
+  isRightDockSingletonTabOpen,
   normalizeChatRuntimeControlsForProvider,
-  removeProjectToolsProjectState,
+  openRightDockSingletonTab,
+  removeRightDockProjectState,
   resolveWorkspaceProjects,
   type SelectedModel,
   type SystemToolId,
@@ -139,13 +136,9 @@ import {
   updateCustomSettings,
   updateMcp,
   updateMemorySettings,
-  updateProjectToolsFileTreeOpen,
-  updateProjectToolsFileTreeProjectState,
-  updateProjectToolsGitReviewOpen,
-  updateProjectToolsPanelActiveTab,
-  updateProjectToolsPanelTabOrder,
-  updateProjectToolsSshTunnelOpen,
-  updateProjectToolsTunnelOpen,
+  updateRightDockFileTreeState,
+  updateRightDockProjectState,
+  updateRightDockWidth,
   updateSkills,
   updateSshProjectHostIds,
   type WorkspaceProject,
@@ -661,9 +654,9 @@ export function ChatPage(props: ChatPageProps) {
 
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
-  const [projectToolsPanelOpen, setProjectToolsPanelOpen] = useState(false);
+  const [rightDockOpen, setRightDockOpen] = useState(false);
   const [tunnelRefreshToken, setTunnelRefreshToken] = useState(0);
-  const previousProjectToolsFileTreeOpenRef = useRef(false);
+  const previousRightDockFileTreeOpenRef = useRef(false);
   const [workspaceEditorMounted, setWorkspaceEditorMounted] = useState(false);
   const [workspaceEditorOpen, setWorkspaceEditorOpen] = useState(false);
   const [workspaceEditorCleanupPending, setWorkspaceEditorCleanupPending] = useState(false);
@@ -1049,15 +1042,9 @@ export function ChatPage(props: ChatPageProps) {
       }
 
       setActiveView("chat");
-      setProjectToolsPanelOpen(true);
+      setRightDockOpen(true);
       activateWorkspaceProject(project);
-      setSettings((prev) =>
-        updateProjectToolsFileTreeOpen(
-          updateProjectToolsPanelActiveTab(prev, pathKey, "fileTree"),
-          pathKey,
-          true,
-        ),
-      );
+      setSettings((prev) => openRightDockSingletonTab(prev, pathKey, "fileTree"));
     },
     [activateWorkspaceProject, checkWorkspaceProjectDirectory, setSettings],
   );
@@ -1068,13 +1055,7 @@ export function ChatPage(props: ChatPageProps) {
         workspaceProjectPathKey(projectPathKey) ||
         workspaceProjectPathKey(activeWorkspaceProjectPath);
       if (!targetProjectPathKey) return;
-      setSettings((prev) =>
-        updateProjectToolsTunnelOpen(
-          updateProjectToolsPanelActiveTab(prev, targetProjectPathKey, "tunnel"),
-          targetProjectPathKey,
-          true,
-        ),
-      );
+      setSettings((prev) => openRightDockSingletonTab(prev, targetProjectPathKey, "tunnel"));
     },
     [activeWorkspaceProjectPath, setSettings],
   );
@@ -1475,17 +1456,14 @@ export function ChatPage(props: ChatPageProps) {
         : [],
     [terminalProjectPathKey, terminalSessions],
   );
-  const projectToolsFileTreeOpen = isProjectToolsFileTreeOpen(
+  const rightDockProjectState = getRightDockProjectState(
     settings.customSettings,
     terminalProjectPathKey,
   );
-  const projectToolsTunnelOpen = isProjectToolsTunnelOpen(
+  const rightDockFileTreeOpen = isRightDockSingletonTabOpen(
     settings.customSettings,
     terminalProjectPathKey,
-  );
-  const projectToolsSshTunnelOpen = isProjectToolsSshTunnelOpen(
-    settings.customSettings,
-    terminalProjectPathKey,
+    "fileTree",
   );
   const associatedSshHostIds = getSshProjectHostIds(settings.ssh, terminalProjectPathKey);
   const terminalDisabledMessage = !isAgentMode
@@ -1567,21 +1545,21 @@ export function ChatPage(props: ChatPageProps) {
     setWorkspaceImagePreviewOpenRequest(null);
   }, []);
   useEffect(() => {
-    const previousOpen = previousProjectToolsFileTreeOpenRef.current;
-    previousProjectToolsFileTreeOpenRef.current = projectToolsFileTreeOpen;
-    if (projectToolsFileTreeOpen && workspaceEditorCleanupPending) {
+    const previousOpen = previousRightDockFileTreeOpenRef.current;
+    previousRightDockFileTreeOpenRef.current = rightDockFileTreeOpen;
+    if (rightDockFileTreeOpen && workspaceEditorCleanupPending) {
       setWorkspaceEditorCleanupPending(false);
     }
-    if (previousOpen && !projectToolsFileTreeOpen && workspaceEditorMounted) {
+    if (previousOpen && !rightDockFileTreeOpen && workspaceEditorMounted) {
       setWorkspaceEditorCleanupPending(true);
       setWorkspaceEditorOpen(true);
       requestWorkspaceEditorClose();
     }
-    if (previousOpen && !projectToolsFileTreeOpen && workspaceImagePreviewMounted) {
+    if (previousOpen && !rightDockFileTreeOpen && workspaceImagePreviewMounted) {
       requestWorkspaceImagePreviewClose();
     }
   }, [
-    projectToolsFileTreeOpen,
+    rightDockFileTreeOpen,
     requestWorkspaceEditorClose,
     requestWorkspaceImagePreviewClose,
     workspaceEditorCleanupPending,
@@ -2072,7 +2050,7 @@ export function ChatPage(props: ChatPageProps) {
             getDefaultWorkspaceProjectPath(prev.system),
           ),
         };
-        return removeProjectToolsProjectState(nextSettings, pathKey);
+        return removeRightDockProjectState(nextSettings, pathKey);
       });
       setProjectRenamingId((current) => (current === project.id ? null : current));
       setProjectRenameDraft("");
@@ -2174,7 +2152,7 @@ export function ChatPage(props: ChatPageProps) {
             );
           }
           if (pathKey && terminalProjectPathKey === pathKey) {
-            setProjectToolsPanelOpen(false);
+            setRightDockOpen(false);
             setTerminalSessions((current) =>
               current.filter((session) => !terminalSessionBelongsToProject(session, pathKey)),
             );
@@ -4460,12 +4438,12 @@ export function ChatPage(props: ChatPageProps) {
           onCloseSidebar={handleCloseSidebar}
           onOpenSkillsHub={() => {
             cacheActiveComposerDraft();
-            setProjectToolsPanelOpen(false);
+            setRightDockOpen(false);
             setActiveView("skills-hub");
           }}
           onOpenMcpHub={() => {
             cacheActiveComposerDraft();
-            setProjectToolsPanelOpen(false);
+            setRightDockOpen(false);
             setActiveView("mcp-hub");
           }}
         />
@@ -4543,19 +4521,19 @@ export function ChatPage(props: ChatPageProps) {
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => setProjectToolsPanelOpen((open) => !open)}
-                      disabled={Boolean(terminalDisabledMessage) && !projectToolsPanelOpen}
-                      aria-expanded={projectToolsPanelOpen}
+                      onClick={() => setRightDockOpen((open) => !open)}
+                      disabled={Boolean(terminalDisabledMessage) && !rightDockOpen}
+                      aria-expanded={rightDockOpen}
                       title={
-                        projectToolsPanelOpen
+                        rightDockOpen
                           ? "Collapse project tools panel"
                           : (terminalDisabledMessage ?? "Expand project tools panel")
                       }
                       className={`relative h-8 w-8 rounded-lg text-muted-foreground transition-[background-color,color,transform] duration-150 hover:text-foreground active:scale-95 ${
-                        projectToolsPanelOpen ? "bg-muted text-foreground" : ""
+                        rightDockOpen ? "bg-muted text-foreground" : ""
                       }`}
                     >
-                      {projectToolsPanelOpen ? (
+                      {rightDockOpen ? (
                         <PanelRightClose className="h-4.5 w-4.5" />
                       ) : (
                         <PanelRightOpen className="h-4.5 w-4.5" />
@@ -4758,25 +4736,20 @@ export function ChatPage(props: ChatPageProps) {
           </Suspense>
         ) : null}
       </div>
-      <ProjectToolsPanel
-        isOpen={activeView === "chat" && projectToolsPanelOpen}
+      <RightDockPanel
+        isOpen={activeView === "chat" && rightDockOpen}
         collapseImmediately={activeView !== "chat"}
         projectPathKey={terminalProjectPathKey}
         cwd={terminalProjectPath}
         sessions={terminalSessions}
-        width={settings.customSettings.projectToolsPanel.width}
+        width={settings.customSettings.rightDock.width}
         theme={settings.theme}
         disabledMessage={terminalDisabledMessage}
-        activeTab={getProjectToolsPanelActiveTab(settings.customSettings, terminalProjectPathKey)}
-        tabOrder={getProjectToolsPanelTabOrder(settings.customSettings, terminalProjectPathKey)}
-        fileTreeOpen={projectToolsFileTreeOpen}
-        fileTreeState={getProjectToolsFileTreeProjectState(
+        projectState={rightDockProjectState}
+        fileTreeState={getRightDockFileTreeState(
           settings.customSettings,
           terminalProjectPathKey,
         )}
-        gitReviewOpen={isProjectToolsGitReviewOpen(settings.customSettings, terminalProjectPathKey)}
-        tunnelOpen={projectToolsTunnelOpen}
-        sshTunnelOpen={projectToolsSshTunnelOpen}
         sshHosts={settings.ssh.hosts}
         associatedSshHostIds={associatedSshHostIds}
         client={tauriTerminalClient}
@@ -4787,41 +4760,15 @@ export function ChatPage(props: ChatPageProps) {
         tunnelDisabledMessage={tunnelDisabledMessage}
         tunnelRefreshToken={tunnelRefreshToken}
         onWidthChange={(nextWidth) =>
-          setSettings((prev) =>
-            updateCustomSettings(prev, {
-              projectToolsPanel: {
-                ...prev.customSettings.projectToolsPanel,
-                width: nextWidth,
-              },
-            }),
-          )
+          setSettings((prev) => updateRightDockWidth(prev, nextWidth))
         }
-        onActiveTabChange={(activeTab) =>
-          setSettings((prev) =>
-            updateProjectToolsPanelActiveTab(prev, terminalProjectPathKey, activeTab),
-          )
+        onProjectStateChange={(updater) =>
+          setSettings((prev) => updateRightDockProjectState(prev, terminalProjectPathKey, updater))
         }
-        onTabOrderChange={(tabOrder) =>
-          setSettings((prev) =>
-            updateProjectToolsPanelTabOrder(prev, terminalProjectPathKey, tabOrder),
-          )
-        }
-        onFileTreeOpenChange={(open) => {
-          setSettings((prev) => updateProjectToolsFileTreeOpen(prev, terminalProjectPathKey, open));
-        }}
         onFileTreeStateChange={(patch) =>
           setSettings((prev) =>
-            updateProjectToolsFileTreeProjectState(prev, terminalProjectPathKey, patch),
+            updateRightDockFileTreeState(prev, terminalProjectPathKey, patch),
           )
-        }
-        onGitReviewOpenChange={(open) =>
-          setSettings((prev) => updateProjectToolsGitReviewOpen(prev, terminalProjectPathKey, open))
-        }
-        onTunnelOpenChange={(open) =>
-          setSettings((prev) => updateProjectToolsTunnelOpen(prev, terminalProjectPathKey, open))
-        }
-        onSshTunnelOpenChange={(open) =>
-          setSettings((prev) => updateProjectToolsSshTunnelOpen(prev, terminalProjectPathKey, open))
         }
         onSshProjectHostIdsChange={(hostIds) =>
           setSettings((prev) => updateSshProjectHostIds(prev, terminalProjectPathKey, hostIds))

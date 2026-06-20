@@ -9,7 +9,6 @@ import {
   type AppSettings,
   getDefaultSettings,
   normalizeSettings,
-  preserveProjectToolsSessionState,
   resolveWorkspaceProjects,
 } from "./lib/settings";
 import {
@@ -214,8 +213,10 @@ export default function App() {
   const setSettings = useCallback(
     (updater: (prev: AppSettings) => AppSettings) => {
       setSettingsState((prev) => {
+        const updated = updater(prev);
+        if (updated === prev) return prev;
         const next = applyRuntimeSystemDefaults(
-          normalizeSettings(updater(prev)),
+          normalizeSettings(updated),
           defaultWorkdirRef.current,
         );
         queueSettingsSave(
@@ -235,9 +236,7 @@ export default function App() {
     const { settings: loaded, defaultWorkdir } = await loadPersistedSettingsWithDefaults();
     defaultWorkdirRef.current = defaultWorkdir;
     const loadedWithDefaults = applyRuntimeSystemDefaults(loaded, defaultWorkdir);
-    setSettingsState((current) =>
-      preserveProjectToolsSessionState(loadedWithDefaults, current),
-    );
+    setSettingsState(loadedWithDefaults);
     setSettingsSaveState({ status: "saved" });
   }, []);
 

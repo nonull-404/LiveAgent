@@ -6,13 +6,7 @@ import {
   normalizeSelectedModel,
   normalizeSettings,
   normalizeChatRuntimeControls,
-  normalizeProjectToolsFileTreeSettings,
-  normalizeProjectToolsGitReviewSettings,
-  normalizeProjectToolsSshTunnelSettings,
-  normalizeProjectToolsTunnelSettings,
-  normalizeProjectToolsPanelActiveTab,
-  normalizeProjectToolsPanelActiveTabs,
-  normalizeProjectToolsPanelTabOrders,
+  normalizeRightDockSettings,
   type ChatRuntimeControls,
   normalizeSkillsSettings,
   normalizeTheme,
@@ -57,13 +51,7 @@ export type SettingsSaveState =
 function toPersistedLocalCustomSettings(
   customSettings: AppSettings["customSettings"],
 ): AppSettings["customSettings"] {
-  return {
-    ...customSettings,
-    projectToolsFileTree: normalizeProjectToolsFileTreeSettings({}),
-    projectToolsGitReview: normalizeProjectToolsGitReviewSettings({}),
-    projectToolsTunnel: normalizeProjectToolsTunnelSettings({}),
-    projectToolsSshTunnel: normalizeProjectToolsSshTunnelSettings({}),
-  };
+  return customSettings;
 }
 
 function readLocalUiSettings(): {
@@ -81,36 +69,13 @@ function readLocalUiSettings(): {
     const chatSidebar = (
       obj.chatSidebar && typeof obj.chatSidebar === "object" ? obj.chatSidebar : {}
     ) as Record<string, unknown>;
-    const projectToolsPanel = (
-      obj.projectToolsPanel && typeof obj.projectToolsPanel === "object"
-        ? obj.projectToolsPanel
-        : {}
-    ) as Record<string, unknown>;
-    const projectToolsPanelWidth =
-      typeof projectToolsPanel.width === "number" || typeof projectToolsPanel.width === "string"
-        ? Number(projectToolsPanel.width)
-        : 420;
-    const projectToolsPanelActiveTab = normalizeProjectToolsPanelActiveTab(
-      projectToolsPanel.activeTab,
-    );
     return toPersistedLocalCustomSettings({
       conversationTitleModel: normalizeSelectedModel(obj.conversationTitleModel),
       chatSidebar: {
         projectsCollapsed: chatSidebar.projectsCollapsed === true,
         recentCollapsed: chatSidebar.recentCollapsed === true,
       },
-      projectToolsPanel: {
-        width: Number.isFinite(projectToolsPanelWidth)
-          ? Math.min(1280, Math.max(320, Math.floor(projectToolsPanelWidth)))
-          : 420,
-        activeTab: projectToolsPanelActiveTab,
-        activeTabs: normalizeProjectToolsPanelActiveTabs(projectToolsPanel.activeTabs),
-        tabOrders: normalizeProjectToolsPanelTabOrders(projectToolsPanel.tabOrders),
-      },
-      projectToolsFileTree: normalizeProjectToolsFileTreeSettings({}),
-      projectToolsGitReview: normalizeProjectToolsGitReviewSettings({}),
-      projectToolsTunnel: normalizeProjectToolsTunnelSettings({}),
-      projectToolsSshTunnel: normalizeProjectToolsSshTunnelSettings({}),
+      rightDock: normalizeRightDockSettings(obj.rightDock),
     });
   }
 

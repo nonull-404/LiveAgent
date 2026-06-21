@@ -16,8 +16,11 @@ type MacOsTrafficLightMetrics = {
 
 // Fallback values match tauri.conf.json; runtime AppKit metrics replace them on macOS.
 const MAC_OS_TRAFFIC_LIGHT_TOP = 18;
-const MAC_OS_TRAFFIC_LIGHT_DIAMETER = 12;
+const MAC_OS_TRAFFIC_LIGHT_LEFT = 18;
+const MAC_OS_TRAFFIC_LIGHT_GROUP_WIDTH = 52;
+const MAC_OS_TRAFFIC_LIGHT_GROUP_HEIGHT = 12;
 const MAC_OS_TITLEBAR_TOGGLE_BUTTON_SIZE = 28;
+const MAC_OS_TITLEBAR_TOGGLE_GAP = 22;
 
 function isValidMetrics(
   metrics: MacOsTrafficLightMetrics | null,
@@ -104,13 +107,17 @@ export function MacOsTitleBarToggle({
   const trafficLightMetrics = useMacOsTrafficLightMetrics(show);
   if (!show) return null;
   const trafficLightTop = trafficLightMetrics?.top ?? MAC_OS_TRAFFIC_LIGHT_TOP;
-  const trafficLightHeight = trafficLightMetrics?.height ?? MAC_OS_TRAFFIC_LIGHT_DIAMETER;
+  const trafficLightLeft = trafficLightMetrics?.left ?? MAC_OS_TRAFFIC_LIGHT_LEFT;
+  const trafficLightWidth = trafficLightMetrics?.width ?? MAC_OS_TRAFFIC_LIGHT_GROUP_WIDTH;
+  const trafficLightHeight = trafficLightMetrics?.height ?? MAC_OS_TRAFFIC_LIGHT_GROUP_HEIGHT;
   const toggleTop = trafficLightTop - (MAC_OS_TITLEBAR_TOGGLE_BUTTON_SIZE - trafficLightHeight) / 2;
+  const toggleLeft = trafficLightLeft + trafficLightWidth + MAC_OS_TITLEBAR_TOGGLE_GAP;
   return (
     <div
-      className="fixed left-[92px] z-49 flex items-center gap-0.5 [-webkit-app-region:no-drag]"
+      className="fixed z-49 flex items-center gap-0.5 [-webkit-app-region:no-drag]"
       style={{
         top: toggleTop,
+        left: toggleLeft,
         height: MAC_OS_TITLEBAR_TOGGLE_BUTTON_SIZE,
       }}
     >

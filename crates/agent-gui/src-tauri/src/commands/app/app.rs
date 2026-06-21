@@ -66,7 +66,7 @@ async fn read_macos_traffic_light_metrics(
 fn read_macos_traffic_light_metrics_on_main_thread(
     window: &tauri::Window,
 ) -> Result<Option<MacOsTrafficLightMetrics>, String> {
-    use objc2_app_kit::{NSView, NSWindow, NSWindowButton};
+    use objc2_app_kit::{NSWindow, NSWindowButton};
 
     let ns_window_ptr = window
         .ns_window()
@@ -76,24 +76,48 @@ fn read_macos_traffic_light_metrics_on_main_thread(
     }
 
     let ns_window: &NSWindow = unsafe { &*ns_window_ptr.cast::<NSWindow>() };
-    let Some(close_button) = ns_window.standardWindowButton(NSWindowButton::CloseButton) else {
-        return Ok(None);
-    };
-
-    let close_frame = NSView::frame(&close_button);
-    let close_screen_frame = ns_window.convertRectToScreen(close_frame);
     let window_frame = ns_window.frame();
-    let top_from_top_edge = close_screen_frame.origin.y - window_frame.origin.y;
-    let top_from_bottom_edge = window_frame.origin.y + window_frame.size.height
-        - (close_screen_frame.origin.y + close_screen_frame.size.height);
+
+    let button_frames = [
+        NSWindowButton::CloseButton,
+        NSWindowButton::MiniaturizeButton,
+        NSWindowButton::ZoomButton,
+    ]
+    .into_iter()
+    .filter_map(|button| ns_window.standardWindowButton(button))
+    .map(|button| macos_window_button_screen_frame(ns_window, &button))
+    .collect::<Vec<_>>();
+
+    if button_frames.is_empty() {
+        return Ok(None);
+    }
+
+    let min_x = button_frames
+        .iter()
+        .map(|frame| frame.0)
+        .fold(f64::INFINITY, f64::min);
+    let min_y = button_frames
+        .iter()
+        .map(|frame| frame.1)
+        .fold(f64::INFINITY, f64::min);
+    let max_x = button_frames
+        .iter()
+        .map(|frame| frame.0 + frame.2)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let max_y = button_frames
+        .iter()
+        .map(|frame| frame.1 + frame.3)
+        .fold(f64::NEG_INFINITY, f64::max);
+    let width = max_x - min_x;
+    let height = max_y - min_y;
+    let top_from_top_edge = min_y - window_frame.origin.y;
+    let top_from_bottom_edge = window_frame.origin.y + window_frame.size.height - max_y;
     let top = [top_from_top_edge, top_from_bottom_edge]
         .into_iter()
         .filter(|value| value.is_finite() && *value >= 0.0)
         .min_by(|left, right| left.partial_cmp(right).unwrap())
         .unwrap_or(top_from_bottom_edge);
-    let left = close_screen_frame.origin.x - window_frame.origin.x;
-    let width = close_screen_frame.size.width;
-    let height = close_screen_frame.size.height;
+    let left = min_x - window_frame.origin.x;
 
     if [top, left, width, height]
         .iter()
@@ -110,4 +134,27 @@ fn read_macos_traffic_light_metrics_on_main_thread(
         width,
         height,
     }))
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn macos_window_button_screen_frame(
+    ns_window: &objc2_app_kit::NSWindow,
+    button: &objc2_app_kit::NSButton,
+) -> (f64, f64, f64, f64) {
+    use objc2_app_kit::NSView;
+
+    let frame = NSView::frame(button);
+    let window_frame = unsafe {
+        NSView::superview(button)
+            .map(|superview| superview.convertRect_toView(frame, None))
+            .unwrap_or(frame)
+    };
+    let screen_frame = ns_window.convertRectToScreen(window_frame);
+    (
+        screen_frame.origin.x,
+        screen_frame.origin.y,
+        screen_frame.size.width,
+        screen_frame.size.height,
+    )
 }

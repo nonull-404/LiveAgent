@@ -642,6 +642,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     "settings.navRemote": "Remote",
     "settings.navSkills": "Skills",
     "settings.navMemory": "记忆",
+    "settings.groupGeneral": "通用",
+    "settings.groupIntelligence": "智能",
+    "settings.groupAutomation": "自动化",
+    "settings.groupConnectivity": "连接",
     "settings.backToChat": "返回对话",
     "settings.title": "设置",
 
@@ -2075,6 +2079,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     "settings.navRemote": "Remote",
     "settings.navSkills": "Skills",
     "settings.navMemory": "Memory",
+    "settings.groupGeneral": "General",
+    "settings.groupIntelligence": "Intelligence",
+    "settings.groupAutomation": "Automation",
+    "settings.groupConnectivity": "Connectivity",
     "settings.backToChat": "Back to Chat",
     "settings.title": "Settings",
 

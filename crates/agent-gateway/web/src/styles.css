@@ -292,6 +292,54 @@ html[data-liveagent-webui="gateway"] *::-webkit-scrollbar-corner {
   background: transparent;
 }
 
+html[data-liveagent-webui="gateway"] .chat-queue-scroll {
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html[data-liveagent-webui="gateway"] .chat-queue-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+html[data-liveagent-webui="gateway"] .chat-queue-scrollbar {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  bottom: 2px;
+  z-index: 2;
+  width: 8px;
+  border-radius: 999px;
+  background: hsl(var(--muted) / 0.36);
+  box-shadow: inset 0 0 0 1px hsl(var(--background) / 0.42);
+  cursor: default;
+  touch-action: none;
+}
+
+html[data-liveagent-webui="gateway"] .chat-queue-scrollbar-thumb {
+  position: absolute;
+  left: 1px;
+  right: 1px;
+  top: 0;
+  min-height: 24px;
+  border-radius: 999px;
+  background: hsl(var(--muted-foreground) / 0.42);
+  box-shadow:
+    inset 0 0 0 1px hsl(var(--background) / 0.55),
+    0 1px 2px hsl(220 22% 10% / 0.08);
+  transition: background-color 0.16s ease;
+}
+
+html[data-liveagent-webui="gateway"] .chat-queue-scrollbar:hover .chat-queue-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.56);
+}
+
+html[data-liveagent-webui="gateway"] .chat-queue-scrollbar-thumb:active {
+  background: hsl(var(--muted-foreground) / 0.7);
+}
+
 html[data-liveagent-webui="gateway"] .git-review-transient-scrollbar {
   scrollbar-width: none;
   -ms-overflow-style: none;

@@ -1,5 +1,3 @@
-import { generateDiffFile } from "@git-diff-view/file";
-import { DiffModeEnum, DiffView } from "@git-diff-view/react";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ImageContent, ToolResultMessage, Usage } from "../../lib/agentTypes";
 import {
@@ -30,8 +28,6 @@ import { ImagePreview, type ImagePreviewSlide } from "../../components/chat/Imag
 import { useLocale } from "../../i18n";
 import { cn } from "../../lib/shared/utils";
 import {
-  getStreamingEditToolPreview,
-  getStreamingWriteToolPreview,
   previewText,
   safeStringify,
   shouldDisplayToolTraceItem,
@@ -41,6 +37,20 @@ import {
   type ToolTraceItem,
   type UiRound,
 } from "../../lib/chat/uiMessages";
+import { deriveFileToolPreview, FILE_TOOL_TEXT_FIELDS } from "../../lib/chat/toolPreview";
+import { EditDiffView } from "./EditDiffView";
+import { FileToolArgsDisplay } from "./FileToolArgs";
+import {
+  fileRootTags,
+  MetaTags,
+  PathDisplay,
+  ToolFactGrid,
+  ToolScrollablePre,
+  ToolSection,
+  ToolSurface,
+  ToolSurfaceLabel,
+  type MetaTag,
+} from "./ToolSurfaces";
 import type { HostedSearchBlock } from "../../lib/chat/hostedSearch";
 import { normalizeLiveToolStatus, VIBING_STATUS } from "../../lib/chat/chatPageHelpers";
 import { prepareImageProxyUrl } from "../../lib/providers/proxy";
@@ -63,8 +73,6 @@ import type {
   SubagentMessageResultDetails,
   WriteResultDetails,
 } from "../../lib/tools/builtinTypes";
-import "@git-diff-view/react/styles/diff-view.css";
-
 export function AssistantAvatar(props: { className?: string }) {
   const { className } = props;
   return (
@@ -664,8 +672,6 @@ function getToolMeta(name: string): { Icon: IconComponent; accent: string; categ
   }
 }
 
-type MetaTag = { label: string; value: string };
-
 function displayString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -990,64 +996,6 @@ function getDominantToolName(items: ToolTraceItem[]) {
   return [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Tool";
 }
 
-function ToolSection(props: {
-  label: string;
-  trailing?: ReactNode;
-  children: ReactNode;
-}) {
-  const { label, trailing, children } = props;
-  return (
-    <section className="space-y-2">
-      <div className="flex items-center gap-2">
-        <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground/52">
-          {label}
-        </span>
-        <div className="h-px flex-1 bg-black/[0.05] dark:bg-white/[0.08]" />
-        {trailing}
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function ToolSurface(props: { children: ReactNode; className?: string }) {
-  const { children, className } = props;
-  return (
-    <div
-      className={cn(
-        "rounded-[10px] border border-black/[0.05] bg-white/[0.56] px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.58)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none",
-        className,
-      )}
-    >
-      {children}
-    </div>
-  );
-}
-
-function ToolSurfaceLabel({ label }: { label: string }) {
-  return (
-    <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground/45">
-      {label}
-    </div>
-  );
-}
-
-function ToolFactGrid({ tags }: { tags: MetaTag[] }) {
-  if (tags.length === 0) return null;
-  return (
-    <div className="grid gap-1.5 sm:grid-cols-2">
-      {tags.map((tag) => (
-        <ToolSurface key={`${tag.label}-${tag.value}`} className="px-2.5 py-2">
-          <ToolSurfaceLabel label={tag.label} />
-          <div className="break-all font-mono text-[11px] leading-[1.55] text-foreground/78">
-            {tag.value}
-          </div>
-        </ToolSurface>
-      ))}
-    </div>
-  );
-}
-
 function buildPagedResultTags(params: {
   label: string;
   returned: number;
@@ -1061,44 +1009,6 @@ function buildPagedResultTags(params: {
     ...(offset > 0 ? [{ label: "offset", value: String(offset) }] : []),
     { label: "state", value: hasMore ? "partial" : "complete" },
   ];
-}
-
-function fileRootTags(root?: string | null): MetaTag[] {
-  return root && root !== "workspace" ? [{ label: "root", value: root }] : [];
-}
-
-/** Render path with dir dimmed and filename highlighted */
-function PathDisplay({ path, className }: { path: string; className?: string }) {
-  const lastSlash = path.lastIndexOf("/");
-  if (lastSlash < 0) {
-    return (
-      <span
-        className={cn(
-          className,
-          "block max-w-full overflow-hidden text-ellipsis whitespace-nowrap break-normal",
-        )}
-        title={path}
-      >
-        {path}
-      </span>
-    );
-  }
-  const dir = path.slice(0, lastSlash + 1);
-  const file = path.slice(lastSlash + 1);
-  return (
-    <span
-      className={cn(
-        className,
-        "inline-flex max-w-full min-w-0 items-baseline overflow-hidden whitespace-nowrap break-normal",
-      )}
-      title={path}
-    >
-      <span className="min-w-0 flex-1 truncate text-muted-foreground/40">
-        {dir.length > 50 ? `…${dir.slice(-50)}` : dir}
-      </span>
-      <span className="max-w-[70%] truncate text-foreground/85">{file}</span>
-    </span>
-  );
 }
 
 /** Extract tool-specific display info */
@@ -1142,16 +1052,6 @@ function getToolDisplay(toolCall: { name: string; arguments?: Record<string, unk
       if (typeof args.summary === "string" && typeof args.subject !== "string") tags.push({ label: "subject", value: args.summary as string });
       if (typeof args.message === "string") tags.push({ label: "message", value: `${(args.message as string).length} chars` });
       return { type: "generic" as const, path: null, pattern: null, tags };
-    case "Write":
-      tags.push({ label: "mode", value: "rewrite" });
-      if (typeof args.content === "string") tags.push({ label: "content", value: `${(args.content as string).length} chars` });
-      return { type: "file" as const, path, tags };
-    case "Edit":
-      if (typeof args.old_string === "string") tags.push({ label: "old", value: `${(args.old_string as string).length}c` });
-      if (typeof args.new_string === "string") tags.push({ label: "new", value: `${(args.new_string as string).length}c` });
-      if (typeof args.expected_replacements === "number") tags.push({ label: "×", value: String(args.expected_replacements) });
-      if (args.replace_all === true) tags.push({ label: "all", value: "true" });
-      return { type: "file" as const, path, tags };
     case "Delete":
       return { type: "file" as const, path, tags };
     case "List":
@@ -1185,181 +1085,16 @@ function getToolDisplay(toolCall: { name: string; arguments?: Record<string, unk
   }
 }
 
-/** Inline meta tags */
-function MetaTags({ tags }: { tags: MetaTag[] }) {
-  if (tags.length === 0) return null;
-  const labelCounts = new Map<string, number>();
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {tags.map((tag) => {
-        const seenCount = labelCounts.get(tag.label) ?? 0;
-        labelCounts.set(tag.label, seenCount + 1);
-        const stableKey = seenCount === 0 ? tag.label : `${tag.label}-${seenCount}`;
-        return (
-          <span
-            key={stableKey}
-            className="tool-arg-pill inline-flex min-h-6 items-center gap-1.5 rounded-full border border-black/[0.05] bg-white/[0.78] px-2 py-1 text-[10.5px] leading-none shadow-[inset_0_1px_0_rgba(255,255,255,0.65)] dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none"
-          >
-            <span className="font-semibold uppercase tracking-[0.12em] text-muted-foreground/55">
-              {tag.label}
-            </span>
-            <span className="h-3 w-px bg-black/[0.06] dark:bg-white/[0.08]" />
-            <span className="font-mono tabular-nums text-foreground/75">{tag.value}</span>
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
-function StreamingArgPlaceholder({ label }: { label: string }) {
-  return (
-    <ToolSurface>
-      <div className="text-[11.5px] leading-[1.6] text-muted-foreground/62">{label}</div>
-    </ToolSurface>
-  );
-}
-
-function StreamingTextPreviewSurface({
-  label,
-  hasValue,
-  emptyLabel,
-  preview,
-}: {
-  label: string;
-  hasValue: boolean;
-  emptyLabel: string;
-  preview: { text: string; chars: number; lines: number; truncated: boolean };
-}) {
-  return (
-    <ToolSurface className="overflow-hidden px-0 py-0">
-      <div className="px-2.5 pt-2">
-        <ToolSurfaceLabel label={label} />
-      </div>
-      {hasValue ? (
-        preview.text ? (
-          <ToolScrollablePre className="max-h-56 rounded-none bg-black/[0.02] dark:bg-white/[0.03]">
-            {preview.text}
-          </ToolScrollablePre>
-        ) : (
-          <div className="px-2.5 pb-2 text-[11.5px] leading-[1.6] text-muted-foreground/62">
-            {emptyLabel}
-          </div>
-        )
-      ) : (
-        <div className="px-2.5 pb-2 text-[11.5px] leading-[1.6] text-muted-foreground/62">
-          Waiting for {label}...
-        </div>
-      )}
-    </ToolSurface>
-  );
-}
-
 /** Expanded args display — tool-aware layout */
 function ToolArgsDisplay({ item }: { item: ToolTraceItem }) {
   const toolCall = item.toolCall;
+
+  const filePreview = deriveFileToolPreview(toolCall);
+  if (filePreview) {
+    return <FileToolArgsDisplay preview={filePreview} />;
+  }
+
   const display = getToolDisplay(toolCall);
-
-  const writePreview = getStreamingWriteToolPreview(toolCall);
-  if (writePreview) {
-    const hasAnyArg = Boolean(writePreview.path || writePreview.hasContent);
-    if (!hasAnyArg) {
-      return <StreamingArgPlaceholder label="Waiting for file content..." />;
-    }
-    return (
-      <div className="tool-expand flex flex-col gap-2">
-        {writePreview.path ? (
-          <ToolSurface>
-            <ToolSurfaceLabel label="path" />
-            <PathDisplay
-              path={writePreview.path}
-              className="block min-w-0 break-all font-mono text-[11.5px] leading-[1.6]"
-            />
-          </ToolSurface>
-        ) : null}
-        {writePreview.hasContent ? (
-          <MetaTags
-            tags={[
-              { label: "mode", value: writePreview.mode },
-              { label: "chars", value: String(writePreview.content.chars) },
-              { label: "lines", value: String(writePreview.content.lines) },
-              ...(writePreview.content.truncated ? [{ label: "preview", value: "partial" }] : []),
-            ]}
-          />
-        ) : null}
-        <StreamingTextPreviewSurface
-          label="content"
-          hasValue={writePreview.hasContent}
-          emptyLabel="(empty content)"
-          preview={writePreview.content}
-        />
-      </div>
-    );
-  }
-
-  const editPreview = getStreamingEditToolPreview(toolCall);
-  if (editPreview) {
-    const hasAnyArg =
-      Boolean(editPreview.path) || editPreview.hasOldString || editPreview.hasNewString;
-    if (!hasAnyArg) {
-      return <StreamingArgPlaceholder label="Waiting for replacement strings..." />;
-    }
-    return (
-      <div className="tool-expand flex flex-col gap-2">
-        {editPreview.path ? (
-          <ToolSurface>
-            <ToolSurfaceLabel label="path" />
-            <PathDisplay
-              path={editPreview.path}
-              className="block min-w-0 break-all font-mono text-[11.5px] leading-[1.6]"
-            />
-          </ToolSurface>
-        ) : null}
-        <MetaTags
-          tags={[
-            ...(typeof editPreview.expectedReplacements === "number"
-              ? [{ label: "expected", value: String(editPreview.expectedReplacements) }]
-              : []),
-            ...(editPreview.replaceAll ? [{ label: "all", value: "true" }] : []),
-            ...(editPreview.hasOldString
-              ? [
-                  { label: "old", value: `${editPreview.oldString.chars} chars` },
-                  { label: "old lines", value: String(editPreview.oldString.lines) },
-                ]
-              : []),
-            ...(editPreview.hasNewString
-              ? [
-                  { label: "new", value: `${editPreview.newString.chars} chars` },
-                  { label: "new lines", value: String(editPreview.newString.lines) },
-                ]
-              : []),
-          ]}
-        />
-        {editPreview.hasOldString && editPreview.hasNewString ? (
-          <EditDiffView
-            beforeText={editPreview.oldString.text}
-            afterText={editPreview.newString.text}
-            filePath={editPreview.path}
-          />
-        ) : (
-          <>
-            <StreamingTextPreviewSurface
-              label="old string"
-              hasValue={editPreview.hasOldString}
-              emptyLabel="(empty old string)"
-              preview={editPreview.oldString}
-            />
-            <StreamingTextPreviewSurface
-              label="new string"
-              hasValue={editPreview.hasNewString}
-              emptyLabel="(empty replacement)"
-              preview={editPreview.newString}
-            />
-          </>
-        )}
-      </div>
-    );
-  }
 
   if (isDelegateAgentCardToolCall(toolCall)) {
     const args = toolCall.arguments || {};
@@ -2059,20 +1794,6 @@ function extractReadBody(text: string) {
   return marker >= 0 ? text.slice(marker + 2) : text;
 }
 
-function ToolScrollablePre(props: { children: ReactNode; className?: string }) {
-  const { children, className } = props;
-  return (
-    <pre
-      className={cn(
-        "tool-text-scroll overflow-x-auto overflow-y-auto whitespace-pre break-normal rounded-[8px] px-2.5 py-2 text-[11.5px] leading-[1.6]",
-        className,
-      )}
-    >
-      {children}
-    </pre>
-  );
-}
-
 function CodePreview(props: { text: string; maxChars?: number }) {
   const { text, maxChars = 4000 } = props;
   if (!/\S/.test(text)) return null;
@@ -2080,97 +1801,6 @@ function CodePreview(props: { text: string; maxChars?: number }) {
     <ToolScrollablePre className="max-h-56 bg-black/[0.02] dark:bg-white/[0.03]">
       {previewText(text, maxChars)}
     </ToolScrollablePre>
-  );
-}
-
-function guessLangFromPath(filePath?: string): string {
-  if (!filePath) return "txt";
-  const ext = filePath.split(".").pop()?.toLowerCase();
-  const map: Record<string, string> = {
-    ts: "typescript",
-    tsx: "typescript",
-    js: "javascript",
-    jsx: "javascript",
-    py: "python",
-    rs: "rust",
-    go: "go",
-    java: "java",
-    kt: "kotlin",
-    rb: "ruby",
-    swift: "swift",
-    c: "c",
-    cpp: "cpp",
-    h: "c",
-    hpp: "cpp",
-    cs: "csharp",
-    css: "css",
-    scss: "scss",
-    html: "html",
-    vue: "vue",
-    json: "json",
-    yaml: "yaml",
-    yml: "yaml",
-    toml: "toml",
-    xml: "xml",
-    md: "markdown",
-    sql: "sql",
-    sh: "bash",
-    zsh: "bash",
-    bash: "bash",
-    dockerfile: "dockerfile",
-    lua: "lua",
-    php: "php",
-    dart: "dart",
-  };
-  return (ext && map[ext]) || "txt";
-}
-
-function useIsDark() {
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains("dark"));
-  useEffect(() => {
-    const observer = new MutationObserver(() => {
-      setIsDark(document.documentElement.classList.contains("dark"));
-    });
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["class"] });
-    return () => observer.disconnect();
-  }, []);
-  return isDark;
-}
-
-function EditDiffView(props: { beforeText: string; afterText: string; filePath?: string }) {
-  const { beforeText, afterText, filePath } = props;
-  const isDark = useIsDark();
-  const lang = guessLangFromPath(filePath);
-
-  const diffFile = useMemo(() => {
-    if (!beforeText && !afterText) return undefined;
-    const instance = generateDiffFile(
-      filePath ?? "old",
-      beforeText,
-      filePath ?? "new",
-      afterText,
-      lang,
-      lang,
-    );
-    instance.init();
-    instance.buildSplitDiffLines();
-    return instance;
-  }, [beforeText, afterText, filePath, lang]);
-
-  if (!diffFile) return null;
-
-  return (
-    <div className="edit-tool-diff-view tool-text-scroll overflow-x-auto overflow-y-hidden rounded-[10px] border border-black/[0.06] bg-white/[0.58] shadow-sm dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-none">
-      <DiffView
-        diffFile={diffFile}
-        diffViewMode={DiffModeEnum.Unified}
-        diffViewTheme={isDark ? "dark" : "light"}
-        diffViewHighlight
-        diffViewAddWidget={false}
-        diffViewWrap={false}
-        diffViewFontSize={12}
-      />
-    </div>
   );
 }
 
@@ -2779,8 +2409,7 @@ function ToolCallItem({
   const [open, setOpen] = useState(readOnly || isRedactedToolContent ? false : shouldAutoOpen);
   const isDelegateAgentCard = isDelegateAgentCardToolCall(item.toolCall);
   const hasArgs = Object.keys(item.toolCall.arguments || {}).length > 0;
-  const isStreamingFilePreviewTool =
-    item.toolCall.name === "Write" || item.toolCall.name === "Edit";
+  const isStreamingFilePreviewTool = FILE_TOOL_TEXT_FIELDS[item.toolCall.name] !== undefined;
   const shouldShowArgs =
     !isRedactedToolContent &&
     (!isDelegateAgentCard || !result) &&

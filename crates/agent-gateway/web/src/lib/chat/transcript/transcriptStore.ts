@@ -257,8 +257,15 @@ export function createTranscriptStore(): TranscriptStore {
     snapshot = buildSnapshot();
     emit();
   };
+  // While a batch is open (applySync), schedule() only marks dirty: the
+  // snapshot rebuild and the event replay must land as ONE commit, never an
+  // intermediate frame at the (older) snapshot state.
+  let batchDepth = 0;
   const schedule = (flush?: boolean) => {
     dirty = true;
+    if (batchDepth > 0) {
+      return;
+    }
     if (flush) {
       if (rafId !== null) {
         cancelAnimationFrame(rafId);
@@ -610,6 +617,76 @@ export function createTranscriptStore(): TranscriptStore {
     }
   }
 
+  const applySyncLocked = (result: ConversationSubscribeResult) => {
+    if (result.reset) {
+      // Seq continuity broke (gateway restart / buffer gap). Folded and
+      // settled turns hold finished content with stable ids — fold, never
+      // drop. A streaming turn's content is rebuilt from the snapshot and
+      // replay, but the turn object (and its user bubble) survives, so the
+      // active exchange never remounts. Pending turns — optimistic echoes
+      // whose run hasn't started — survive untouched and bind normally
+      // when their seed replays.
+      lastSeq = 0;
+      let changed = false;
+      turns = turns.map((turn) => {
+        if (turn.phase === "settled" && !turn.folded) {
+          changed = true;
+          return { ...turn, folded: true };
+        }
+        if (turn.phase === "streaming") {
+          changed = true;
+          if (result.activity && result.activity.runId === turn.runId) {
+            // Still running server-side: the snapshot/replay rebuilds the
+            // content into this same turn object. When the incoming snapshot
+            // targets this run, keep the delta-built entries so the rebuild
+            // can compare per-tool-call progress instead of starting blind.
+            return result.snapshot?.runId === turn.runId ? turn : { ...turn, entries: [] };
+          }
+          // The run ended while this client was away and the replay may
+          // not cover it any more: settle the turn (never strand it as a
+          // pending zombie) so the idle enrich can adopt its persisted
+          // reply from history.
+          return { ...turn, entries: [], phase: "settled" as const };
+        }
+        return turn;
+      });
+      if (changed) {
+        foldRevision += 1;
+      }
+      toolStatus = null;
+      toolStatusIsCompaction = false;
+      // Set the activity before the rebuild so the snapshot can target the
+      // optimistic pending turn by client_request_id (its user bubble then
+      // keeps its identity instead of a duplicate run turn appearing).
+      activeRun = result.activity;
+      if (result.snapshot) {
+        rebuildActiveTurnFromSnapshot(result.snapshot.entriesJson, result.snapshot.runId);
+        lastSeq = Math.max(lastSeq, result.snapshot.asOfSeq);
+      }
+    } else {
+      activeRun = result.activity;
+      if (result.snapshot) {
+        // Late join mid-run where the buffer cannot cover the run start.
+        // The snapshot folds every event through asOfSeq into its entries;
+        // advancing the cursor drops the overlapping replay below.
+        const existing = findTurnByRunId(result.snapshot.runId);
+        if (!existing || existing.entries.length === 0) {
+          rebuildActiveTurnFromSnapshot(result.snapshot.entriesJson, result.snapshot.runId);
+          lastSeq = Math.max(lastSeq, result.snapshot.asOfSeq);
+        }
+      }
+    }
+    if (result.activity) {
+      setToolStatus(result.activity.toolStatus, result.activity.toolStatusIsCompaction);
+    } else if (result.reset) {
+      setToolStatus(null, false);
+    }
+    for (const event of result.events) {
+      applyOne(event);
+    }
+    lastSeq = Math.max(lastSeq, result.latestSeq);
+  };
+
   return {
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
@@ -619,72 +696,16 @@ export function createTranscriptStore(): TranscriptStore {
       };
     },
 
+    // The rebuild + replay of a (re)subscribe commits as one frame: an
+    // intermediate render at the snapshot's older state is exactly the
+    // backwards flicker the progress guards exist to prevent.
     applySync: (result) => {
-      if (result.reset) {
-        // Seq continuity broke (gateway restart / buffer gap). Folded and
-        // settled turns hold finished content with stable ids — fold, never
-        // drop. A streaming turn's content is rebuilt from the snapshot and
-        // replay, but the turn object (and its user bubble) survives, so the
-        // active exchange never remounts. Pending turns — optimistic echoes
-        // whose run hasn't started — survive untouched and bind normally
-        // when their seed replays.
-        lastSeq = 0;
-        let changed = false;
-        turns = turns.map((turn) => {
-          if (turn.phase === "settled" && !turn.folded) {
-            changed = true;
-            return { ...turn, folded: true };
-          }
-          if (turn.phase === "streaming") {
-            changed = true;
-            if (result.activity && result.activity.runId === turn.runId) {
-              // Still running server-side: the snapshot/replay rebuilds the
-              // content into this same turn object.
-              return { ...turn, entries: [] };
-            }
-            // The run ended while this client was away and the replay may
-            // not cover it any more: settle the turn (never strand it as a
-            // pending zombie) so the idle enrich can adopt its persisted
-            // reply from history.
-            return { ...turn, entries: [], phase: "settled" as const };
-          }
-          return turn;
-        });
-        if (changed) {
-          foldRevision += 1;
-        }
-        toolStatus = null;
-        toolStatusIsCompaction = false;
-        // Set the activity before the rebuild so the snapshot can target the
-        // optimistic pending turn by client_request_id (its user bubble then
-        // keeps its identity instead of a duplicate run turn appearing).
-        activeRun = result.activity;
-        if (result.snapshot) {
-          rebuildActiveTurnFromSnapshot(result.snapshot.entriesJson, result.snapshot.runId);
-          lastSeq = Math.max(lastSeq, result.snapshot.asOfSeq);
-        }
-      } else {
-        activeRun = result.activity;
-        if (result.snapshot) {
-          // Late join mid-run where the buffer cannot cover the run start.
-          // The snapshot folds every event through asOfSeq into its entries;
-          // advancing the cursor drops the overlapping replay below.
-          const existing = findTurnByRunId(result.snapshot.runId);
-          if (!existing || existing.entries.length === 0) {
-            rebuildActiveTurnFromSnapshot(result.snapshot.entriesJson, result.snapshot.runId);
-            lastSeq = Math.max(lastSeq, result.snapshot.asOfSeq);
-          }
-        }
+      batchDepth += 1;
+      try {
+        applySyncLocked(result);
+      } finally {
+        batchDepth -= 1;
       }
-      if (result.activity) {
-        setToolStatus(result.activity.toolStatus, result.activity.toolStatusIsCompaction);
-      } else if (result.reset) {
-        setToolStatus(null, false);
-      }
-      for (const event of result.events) {
-        applyOne(event);
-      }
-      lastSeq = Math.max(lastSeq, result.latestSeq);
       schedule(true);
     },
 

@@ -10,7 +10,7 @@ import (
 
 // Ingress normalization: the three agent-facing gRPC payloads (ChatEvent,
 // ChatControlEvent, ChatRuntimeSnapshot) converge here into one append API on
-// the conversation stream store. Payload shaping and tool-content trimming
+// the conversation stream store. Payload shaping and tool-result trimming
 // happen exactly once, so every subscriber observes identical events.
 
 func (m *Manager) ingestChatEvent(requestID string, event *gatewayv1.ChatEvent) {

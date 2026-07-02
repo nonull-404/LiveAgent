@@ -3,6 +3,7 @@ package chatwire
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	gatewayv1 "github.com/liveagent/agent-gateway/internal/proto/v1"
 )
@@ -58,48 +59,83 @@ func TestEventPayloadPreservesToolCallDeltaType(t *testing.T) {
 	}
 }
 
-func TestTrimLargeToolContentTruncatesWriteArgs(t *testing.T) {
-	longContent := strings.Repeat("x", 500) + "\nline2"
-	payload := map[string]any{
-		"type": "tool_call",
-		"name": "Write",
-		"arguments": map[string]any{
-			"path":    "src/app.ts",
-			"content": longContent,
-		},
+// Tool-call arguments must pass through untouched: the desktop app already
+// truncated them and stamped the preview meta; the gateway rewriting either
+// caused the chars regression this suite guards against.
+func TestEventPayloadLeavesToolCallArgsUntouched(t *testing.T) {
+	longContent := strings.Repeat("x", 500)
+	payload := EventPayload(&gatewayv1.ChatEvent{
+		Type:           gatewayv1.ChatEvent_TOOL_CALL,
+		ConversationId: "conversation-1",
+		Data: `{"type":"tool_call_delta","id":"call-write","name":"Write","arguments":{"path":"src/app.ts","content":"` +
+			longContent +
+			`","__liveagent_stream_preview":{"v":2,"progress":6000,"fields":{"content":{"chars":6000,"lines":12,"truncated":true}}}},"round":1}`,
+	}, 9)
+
+	args, ok := payload["arguments"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected arguments map, got %#v", payload["arguments"])
 	}
-
-	TrimLargeToolContent(payload, "tool_call")
-
-	args := payload["arguments"].(map[string]any)
-	content := args["content"].(string)
-	if len(content) != 200 {
-		t.Fatalf("trimmed content length = %d, want 200", len(content))
+	if content := args["content"].(string); content != longContent {
+		t.Fatalf("content modified: len=%d, want %d", len(content), len(longContent))
 	}
 	meta, ok := args["__liveagent_stream_preview"].(map[string]any)
 	if !ok {
-		t.Fatalf("expected preview meta, got %#v", args)
+		t.Fatalf("expected producer preview meta preserved, got %#v", args)
 	}
 	fields := meta["fields"].(map[string]any)
 	info := fields["content"].(map[string]any)
-	if info["chars"] != len(longContent) || info["truncated"] != true {
-		t.Fatalf("preview meta = %#v", info)
+	if chars, _ := info["chars"].(float64); chars != 6000 {
+		t.Fatalf("producer chars overwritten: %#v", info)
+	}
+	if progress, _ := meta["progress"].(float64); progress != 6000 {
+		t.Fatalf("producer progress overwritten: %#v", meta)
 	}
 }
 
-func TestTrimLargeToolContentTruncatesToolResult(t *testing.T) {
+func TestTrimLargeToolResultContentTruncatesToolResult(t *testing.T) {
 	longText := strings.Repeat("r", 300)
 	payload := map[string]any{
 		"type":    "tool_result",
 		"content": longText,
 	}
 
-	TrimLargeToolContent(payload, "tool_result")
+	TrimLargeToolResultContent(payload, "tool_result")
 
 	if content := payload["content"].(string); len(content) != 200 {
 		t.Fatalf("trimmed result length = %d, want 200", len(content))
 	}
-	if _, ok := payload["__liveagent_stream_preview"]; !ok {
+	meta, ok := payload["__liveagent_stream_preview"].(map[string]any)
+	if !ok {
 		t.Fatalf("expected preview meta on tool_result payload")
+	}
+	fields := meta["fields"].(map[string]any)
+	info := fields["content"].(map[string]any)
+	if info["chars"] != 300 || info["truncated"] != true {
+		t.Fatalf("preview meta = %#v", info)
+	}
+}
+
+func TestTrimLargeToolResultContentIsRuneSafe(t *testing.T) {
+	longText := strings.Repeat("汉", 100) // 300 bytes, 100 runes
+	payload := map[string]any{
+		"type":    "tool_result",
+		"content": longText,
+	}
+
+	TrimLargeToolResultContent(payload, "tool_result")
+
+	content := payload["content"].(string)
+	if !utf8.ValidString(content) {
+		t.Fatalf("truncated content is not valid UTF-8")
+	}
+	if len(content) > 200 {
+		t.Fatalf("trimmed result length = %d, want <= 200", len(content))
+	}
+	meta := payload["__liveagent_stream_preview"].(map[string]any)
+	fields := meta["fields"].(map[string]any)
+	info := fields["content"].(map[string]any)
+	if info["chars"] != 100 {
+		t.Fatalf("chars should count runes, got %#v", info["chars"])
 	}
 }

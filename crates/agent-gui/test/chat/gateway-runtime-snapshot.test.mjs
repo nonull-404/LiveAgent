@@ -8,6 +8,10 @@ const loader = createTsModuleLoader();
 const { buildGatewayRuntimeSnapshotEntries } = loader.loadModule(
   "src/pages/chat/gateway/chatRuntimeSnapshot.ts",
 );
+const { buildGatewayToolCallPreviewArguments } = loader.loadModule(
+  "src/pages/chat/turns/gatewayToolPreview.ts",
+);
+const toolPreview = loader.loadModule("src/lib/chat/messages/toolPreview.ts");
 
 test("gateway runtime snapshot projects live rounds into chat entries", () => {
   const entries = buildGatewayRuntimeSnapshotEntries({
@@ -62,6 +66,40 @@ test("gateway runtime snapshot projects live rounds into chat entries", () => {
   assert.equal(entries[3].toolCall.name, "Shell");
   assert.equal(entries[4].toolResult.toolCallId, "tool-1");
   assert.equal(entries[5].text, " Next step is ready.");
+});
+
+test("gateway runtime snapshot carries the same tool preview shape as bridge deltas", () => {
+  const content = "z".repeat(9000);
+  const toolCall = {
+    type: "toolCall",
+    id: "tool-write",
+    name: "Write",
+    arguments: { path: "big.txt", content },
+  };
+  const entries = buildGatewayRuntimeSnapshotEntries({
+    userMessage: null,
+    liveTranscript: {
+      draftAssistantText: "",
+      toolStatus: null,
+      liveRounds: [
+        {
+          key: "round-1",
+          round: 1,
+          runningToolCallIds: ["tool-write"],
+          thinkingOpen: false,
+          blocks: [{ kind: "tool", item: { toolCall } }],
+        },
+      ],
+    },
+  });
+
+  const entry = entries.find((candidate) => candidate.kind === "tool_call");
+  assert.ok(entry, "expected a tool_call entry");
+  assert.deepEqual(entry.toolCall.arguments, buildGatewayToolCallPreviewArguments(toolCall));
+  assert.ok(entry.toolCall.arguments.content.length <= 4000);
+  const metadata = entry.toolCall.arguments[toolPreview.LIVE_TOOL_PREVIEW_META_KEY];
+  assert.equal(metadata.progress, content.length);
+  assert.equal(metadata.fields.content.chars, content.length);
 });
 
 test("gateway runtime snapshot falls back to draft assistant text", () => {

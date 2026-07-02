@@ -4,6 +4,7 @@ import {
   mergeHostedSearchBlocks,
   normalizeHostedSearchBlock,
 } from "@/lib/chat/hostedSearch";
+import { toolArgsProgress } from "@/lib/chat/toolPreview";
 import { summarizeToolCall } from "@/lib/chat/uiMessages";
 import {
   buildAssistantMeta,
@@ -189,8 +190,21 @@ function mergeSegmentToolCallArguments(
 
     if (incomingId !== "") {
       matches = entry.toolCall.id === incomingId;
-      canUpdate =
-        matches && hasIncomingArgs && safeStringify(existingArgs) !== safeStringify(incomingArgs);
+      if (matches && hasIncomingArgs) {
+        // Monotonic guard for file tools: streamed args only grow, so a
+        // lower-progress writer (late delta replay, lagging snapshot echo)
+        // must never roll the entry back.
+        const incomingProgress = toolArgsProgress(
+          incomingName || entry.toolCall.name,
+          incomingArgs,
+        );
+        const existingProgress = toolArgsProgress(entry.toolCall.name, existingArgs);
+        const regressed =
+          incomingProgress !== undefined &&
+          existingProgress !== undefined &&
+          incomingProgress < existingProgress;
+        canUpdate = !regressed && safeStringify(existingArgs) !== safeStringify(incomingArgs);
+      }
     } else if (incomingName !== "" && entry.toolCall.name === incomingName) {
       const sameArguments = safeStringify(existingArgs) === safeStringify(incomingArgs);
       matches = sameArguments || (!hasExistingArgs && hasIncomingArgs);
@@ -630,6 +644,15 @@ export function applyEventToTurn(turn: Turn, event: ChatEvent): Turn {
 // already-present user bubble keep their identity, so nothing remounts.
 export function rebuildTurnFromSnapshot(turn: Turn, parsed: ChatEntry[]): Turn {
   const ns = turnNamespace(turn);
+  // Index the delta-built tool calls: the snapshot's content is debounced
+  // producer state and can lag the live delta stream, so a rebuild must never
+  // roll a tool call's args back to a lower progress.
+  const existingToolCalls = new Map<string, ChatEntry & { kind: "tool_call" }>();
+  for (const entry of turn.entries) {
+    if (entry.kind === "tool_call" && entry.toolCall.id) {
+      existingToolCalls.set(entry.toolCall.id, entry);
+    }
+  }
   let user = turn.user;
   const entries: ChatEntry[] = [];
   for (const entry of parsed) {
@@ -642,7 +665,28 @@ export function rebuildTurnFromSnapshot(turn: Turn, parsed: ChatEntry[]): Turn {
     // Snapshot entries carry runtime-assigned ids that are stable per run;
     // prefixing with the turn namespace keeps them from colliding with other
     // runs while staying identical across repeated snapshots.
-    entries.push({ ...entry, id: `${ns}:s:${entry.id}` } as ChatEntry);
+    let merged = entry;
+    if (entry.kind === "tool_call") {
+      const prev = existingToolCalls.get(entry.toolCall.id);
+      if (prev) {
+        const prevProgress = toolArgsProgress(
+          prev.toolCall.name,
+          normalizeToolArguments(prev.toolCall.arguments),
+        );
+        const snapshotProgress = toolArgsProgress(
+          entry.toolCall.name,
+          normalizeToolArguments(entry.toolCall.arguments),
+        );
+        if (
+          prevProgress !== undefined &&
+          snapshotProgress !== undefined &&
+          snapshotProgress < prevProgress
+        ) {
+          merged = { ...entry, toolCall: prev.toolCall, summary: prev.summary, text: prev.text };
+        }
+      }
+    }
+    entries.push({ ...merged, id: `${ns}:s:${entry.id}` } as ChatEntry);
   }
   if (user === turn.user && entries.length === 0 && turn.entries.length === 0) {
     return turn;

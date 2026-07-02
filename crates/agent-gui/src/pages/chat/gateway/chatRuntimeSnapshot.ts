@@ -3,16 +3,17 @@ import type { Message, ToolCall, ToolResultMessage, Usage } from "@earendil-work
 import type { LiveTranscriptState } from "../../../lib/chat/conversation/liveTranscriptStore";
 import type { HostedSearchBlock } from "../../../lib/chat/messages/hostedSearch";
 import {
-  getUserMessageAttachments,
-  getUserMessageDisplayText,
-  type PendingUploadedFile,
-} from "../../../lib/chat/messages/uploadedFiles";
-import {
   safeStringify,
   summarizeToolCall,
   toolResultMessageToText,
   type UiRound,
 } from "../../../lib/chat/messages/uiMessages";
+import {
+  getUserMessageAttachments,
+  getUserMessageDisplayText,
+  type PendingUploadedFile,
+} from "../../../lib/chat/messages/uploadedFiles";
+import { buildGatewayToolCallPreviewArguments } from "../turns/gatewayToolPreview";
 
 export type GatewayRuntimeSnapshotState = "running" | "completed" | "failed" | "cancelled";
 
@@ -80,10 +81,11 @@ function normalizeToolArguments(value: unknown): Record<string, unknown> {
 }
 
 function normalizeToolCall(toolCall: ToolCall | undefined, fallbackId: string): ToolCall {
-  const source = toolCall as (ToolCall & { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown }) | undefined;
+  const source = toolCall as
+    | (ToolCall & { type?: unknown; id?: unknown; name?: unknown; arguments?: unknown })
+    | undefined;
   const id = typeof source?.id === "string" && source.id.trim() ? source.id.trim() : fallbackId;
-  const name =
-    typeof source?.name === "string" && source.name.trim() ? source.name.trim() : "Tool";
+  const name = typeof source?.name === "string" && source.name.trim() ? source.name.trim() : "Tool";
   return {
     ...(toolCall ?? {}),
     type: "toolCall",
@@ -127,13 +129,20 @@ function buildToolCallEntry(
   toolCall: ToolCall | undefined,
 ): GatewayRuntimeSnapshotEntry {
   const normalized = normalizeToolCall(toolCall, `${prefix}-tool-${round ?? 0}-${index}`);
+  // Snapshot entries must carry the same preview shape (truncated text +
+  // meta + monotonic progress) as bridge deltas, so remote consumers can
+  // order the two writers and never regress a streaming preview.
+  const streamed = {
+    ...normalized,
+    arguments: buildGatewayToolCallPreviewArguments(normalized),
+  } as ToolCall;
   return {
-    id: `${prefix}-tool-call-${round ?? 0}-${normalized.id}-${index}`,
+    id: `${prefix}-tool-call-${round ?? 0}-${streamed.id}-${index}`,
     kind: "tool_call",
     round,
-    toolCall: normalized,
-    summary: summarizeToolCall(normalized),
-    text: safeStringify(normalized.arguments),
+    toolCall: streamed,
+    summary: summarizeToolCall(streamed),
+    text: safeStringify(streamed.arguments),
   };
 }
 
@@ -211,7 +220,7 @@ function appendRoundEntries(
         block.item.toolCall,
         `${prefix}-tool-${round.round}-${toolIndex}`,
       );
-      entries.push(buildToolCallEntry(prefix, round.round, toolIndex, toolCall));
+      entries.push(buildToolCallEntry(prefix, round.round, toolIndex, block.item.toolCall));
       if (block.item.toolResult) {
         entries.push(
           buildToolResultEntry(prefix, round.round, toolIndex, toolCall, block.item.toolResult),

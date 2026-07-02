@@ -1,17 +1,22 @@
 // Package chatwire shapes agent chat protobuf events into the JSON payloads
-// sent to webui clients. Shaping (decode, normalize, trim) happens exactly once
-// at ingress so every subscriber observes identical bytes.
+// sent to webui clients. Shaping (decode, normalize, result trimming) happens
+// exactly once at ingress so every subscriber observes identical bytes.
+//
+// Tool-call arguments pass through untouched: the desktop app is the single
+// producer of streaming previews (truncated text + __liveagent_stream_preview
+// metadata) and the gateway must never recompute or overwrite them.
 package chatwire
 
 import (
 	"encoding/json"
 	"strings"
+	"unicode/utf8"
 
 	gatewayv1 "github.com/liveagent/agent-gateway/internal/proto/v1"
 )
 
 // EventPayload shapes a ChatEvent into a wire payload, decoding the JSON data
-// blob and trimming oversized tool content.
+// blob and trimming oversized tool-result content.
 func EventPayload(event *gatewayv1.ChatEvent, seq int64, workdirInput ...string) map[string]any {
 	protoType := EventTypeName(event.GetType())
 	payload := map[string]any{
@@ -42,76 +47,26 @@ func EventPayload(event *gatewayv1.ChatEvent, seq int64, workdirInput ...string)
 		payload["conversation_id"] = conversationID
 	}
 
-	TrimLargeToolContent(payload, protoType)
+	TrimLargeToolResultContent(payload, protoType)
 
 	return payload
 }
 
-const toolContentMaxChars = 200
+const toolResultMaxBytes = 200
 
-var toolFieldsToTrim = map[string][]string{
-	"Write":        {"content"},
-	"Edit":         {"old_string", "new_string"},
-	"NotebookEdit": {"new_source"},
-}
-
-// TrimLargeToolContent truncates oversized tool arguments/results in place,
-// attaching a __liveagent_stream_preview meta block describing the original size.
-func TrimLargeToolContent(payload map[string]any, protoType string) {
+// TrimLargeToolResultContent truncates oversized tool-result content in place,
+// attaching a __liveagent_stream_preview meta block describing the original
+// size. Tool-call arguments are never touched.
+func TrimLargeToolResultContent(payload map[string]any, protoType string) {
 	eventType, _ := payload["type"].(string)
-
-	if eventType == "tool_call" || eventType == "tool_call_delta" ||
-		protoType == "tool_call" || protoType == "tool_call_delta" {
-		trimToolCallPayload(payload)
+	if eventType != "tool_result" && protoType != "tool_result" {
 		return
 	}
-	if eventType == "tool_result" || protoType == "tool_result" {
-		trimToolResultPayload(payload)
-	}
-}
-
-func trimToolCallPayload(payload map[string]any) {
-	toolName := firstString(payload["name"], payload["tool_name"])
-	fields, ok := toolFieldsToTrim[toolName]
-	if !ok {
-		return
-	}
-
-	args := firstMap(payload["arguments"], payload["input"], payload["args"])
-	if args == nil {
-		args = tryParseJSONStringArg(payload, "arguments", "input", "args")
-		if args == nil {
-			return
-		}
-	}
-
-	for _, field := range fields {
-		trimStringFieldWithPreview(args, field, toolContentMaxChars)
-	}
-}
-
-func tryParseJSONStringArg(payload map[string]any, keys ...string) map[string]any {
-	for _, key := range keys {
-		s, ok := payload[key].(string)
-		if !ok || s == "" {
-			continue
-		}
-		var parsed map[string]any
-		if err := json.Unmarshal([]byte(s), &parsed); err == nil && len(parsed) > 0 {
-			payload[key] = parsed
-			return parsed
-		}
-	}
-	return nil
-}
-
-func trimToolResultPayload(payload map[string]any) {
 	switch content := payload["content"].(type) {
 	case string:
-		if len(content) > toolContentMaxChars {
-			lines := countLines(content)
-			payload["content"] = content[:toolContentMaxChars]
-			ensurePreviewMeta(payload, "content", len(content), lines, true)
+		if len(content) > toolResultMaxBytes {
+			payload["content"] = truncateRuneSafe(content, toolResultMaxBytes)
+			setPreviewMeta(payload, "content", content)
 		}
 	case []any:
 		for _, item := range content {
@@ -119,26 +74,27 @@ func trimToolResultPayload(payload map[string]any) {
 			if !ok {
 				continue
 			}
-			if text, ok := block["text"].(string); ok && len(text) > toolContentMaxChars {
-				lines := countLines(text)
-				block["text"] = text[:toolContentMaxChars]
-				ensurePreviewMeta(block, "text", len(text), lines, true)
+			if text, ok := block["text"].(string); ok && len(text) > toolResultMaxBytes {
+				block["text"] = truncateRuneSafe(text, toolResultMaxBytes)
+				setPreviewMeta(block, "text", text)
 			}
 		}
 	}
 }
 
-func trimStringFieldWithPreview(args map[string]any, field string, maxChars int) {
-	text, ok := args[field].(string)
-	if !ok || len(text) <= maxChars {
-		return
+// truncateRuneSafe cuts s to at most maxBytes without splitting a UTF-8 rune.
+func truncateRuneSafe(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
 	}
-	lines := countLines(text)
-	args[field] = text[:maxChars]
-	ensurePreviewMeta(args, field, len(text), lines, true)
+	cut := maxBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
-func ensurePreviewMeta(container map[string]any, fieldName string, chars int, lines int, truncated bool) {
+func setPreviewMeta(container map[string]any, fieldName string, original string) {
 	const metaKey = "__liveagent_stream_preview"
 	meta, _ := container[metaKey].(map[string]any)
 	if meta == nil {
@@ -151,9 +107,9 @@ func ensurePreviewMeta(container map[string]any, fieldName string, chars int, li
 		meta["fields"] = fields
 	}
 	fields[fieldName] = map[string]any{
-		"chars":     chars,
-		"lines":     lines,
-		"truncated": truncated,
+		"chars":     utf8.RuneCountInString(original),
+		"lines":     countLines(original),
+		"truncated": true,
 	}
 }
 
@@ -173,24 +129,6 @@ func countLines(s string) int {
 		}
 	}
 	return n
-}
-
-func firstString(candidates ...any) string {
-	for _, c := range candidates {
-		if s, ok := c.(string); ok && s != "" {
-			return s
-		}
-	}
-	return ""
-}
-
-func firstMap(candidates ...any) map[string]any {
-	for _, c := range candidates {
-		if m, ok := c.(map[string]any); ok && len(m) > 0 {
-			return m
-		}
-	}
-	return nil
 }
 
 // EventTypeName maps the protobuf ChatEvent type enum to its wire name.

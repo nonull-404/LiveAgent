@@ -10,6 +10,7 @@ const hostedSearch = loader.loadModule("src/lib/chat/messages/hostedSearch.ts");
 const seedToolCalls = loader.loadModule("src/lib/chat/runner/seedToolCalls.ts");
 const chatHelpers = loader.loadModule("src/lib/chat/page/chatPageHelpers.ts");
 const gatewayToolPreview = loader.loadModule("src/pages/chat/turns/gatewayToolPreview.ts");
+const toolPreview = loader.loadModule("src/lib/chat/messages/toolPreview.ts");
 
 const fileA = {
   relativePath: "src/App.tsx",
@@ -43,21 +44,23 @@ test("gateway tool preview keeps Write payloads small while preserving full metr
       content,
     },
   });
-  const metadata = args[gatewayToolPreview.LIVE_TOOL_PREVIEW_META_KEY];
+  const metadata = args[toolPreview.LIVE_TOOL_PREVIEW_META_KEY];
   const contentMetrics = metadata.fields.content;
 
   assert.equal(args.path, "src/generated.txt");
   assert.notEqual(args.content, content);
   assert.ok(args.content.length <= 4000, `preview length ${args.content.length} should be capped`);
+  assert.equal(metadata.v, 2);
+  assert.equal(metadata.progress, content.length);
   assert.equal(contentMetrics.chars, content.length);
   assert.equal(contentMetrics.lines, 700);
   assert.equal(contentMetrics.truncated, true);
-  assert.equal(contentMetrics.strategy, "head-tail");
 
-  const preview = uiMessages.getStreamingWriteToolPreview({
+  const preview = toolPreview.deriveFileToolPreview({
     name: "Write",
     arguments: args,
   });
+  assert.equal(preview.kind, "write");
   assert.equal(preview.content.chars, content.length);
   assert.equal(preview.content.lines, 700);
   assert.equal(preview.content.truncated, true);
@@ -65,11 +68,11 @@ test("gateway tool preview keeps Write payloads small while preserving full metr
 });
 
 test("gateway tool preview handles empty and short Write content without false truncation", () => {
-  const partialPreview = uiMessages.getStreamingWriteToolPreview({
+  const partialPreview = toolPreview.deriveFileToolPreview({
     name: "Write",
     arguments: {},
   });
-  assert.equal(partialPreview.hasContent, false);
+  assert.equal(partialPreview.content.has, false);
   assert.equal(partialPreview.content.chars, 0);
   assert.equal(partialPreview.content.lines, 0);
   assert.equal(partialPreview.content.truncated, false);
@@ -81,17 +84,18 @@ test("gateway tool preview handles empty and short Write content without false t
       content: "hello\nworld",
     },
   });
-  const metadata = args[gatewayToolPreview.LIVE_TOOL_PREVIEW_META_KEY];
+  const metadata = args[toolPreview.LIVE_TOOL_PREVIEW_META_KEY];
   assert.equal(args.content, "hello\nworld");
+  assert.equal(metadata.progress, 11);
   assert.equal(metadata.fields.content.chars, 11);
   assert.equal(metadata.fields.content.lines, 2);
   assert.equal(metadata.fields.content.truncated, false);
 
-  const preview = uiMessages.getStreamingWriteToolPreview({
+  const preview = toolPreview.deriveFileToolPreview({
     name: "Write",
     arguments: args,
   });
-  assert.equal(preview.hasContent, true);
+  assert.equal(preview.content.has, true);
   assert.equal(preview.content.text, "hello\nworld");
   assert.equal(preview.content.lines, 2);
 });
@@ -113,26 +117,82 @@ test("gateway tool preview keeps Edit old/new payloads small with independent me
       expected_replacements: 1,
     },
   });
-  const metadata = args[gatewayToolPreview.LIVE_TOOL_PREVIEW_META_KEY];
+  const metadata = args[toolPreview.LIVE_TOOL_PREVIEW_META_KEY];
 
   assert.notEqual(args.old_string, oldString);
   assert.notEqual(args.new_string, newString);
   assert.ok(args.old_string.length <= 4000);
   assert.ok(args.new_string.length <= 4000);
+  assert.equal(metadata.progress, oldString.length + newString.length);
   assert.equal(metadata.fields.old_string.chars, oldString.length);
   assert.equal(metadata.fields.old_string.lines, 520);
   assert.equal(metadata.fields.new_string.chars, newString.length);
   assert.equal(metadata.fields.new_string.lines, 480);
 
-  const preview = uiMessages.getStreamingEditToolPreview({
+  const preview = toolPreview.deriveFileToolPreview({
     name: "Edit",
     arguments: args,
   });
+  assert.equal(preview.kind, "edit");
   assert.equal(preview.oldString.chars, oldString.length);
   assert.equal(preview.oldString.lines, 520);
   assert.equal(preview.newString.chars, newString.length);
   assert.equal(preview.newString.lines, 480);
   assert.equal(preview.expectedReplacements, 1);
+});
+
+test("gateway tool preview covers NotebookEdit new_source", () => {
+  const newSource = Array.from({ length: 400 }, (_, index) => `cell-${index} ${"c".repeat(20)}`).join(
+    "\n",
+  );
+  const args = gatewayToolPreview.buildGatewayToolCallPreviewArguments({
+    name: "NotebookEdit",
+    arguments: {
+      notebook_path: "notebooks/analysis.ipynb",
+      new_source: newSource,
+    },
+  });
+  const metadata = args[toolPreview.LIVE_TOOL_PREVIEW_META_KEY];
+  assert.ok(args.new_source.length <= 4000);
+  assert.equal(metadata.progress, newSource.length);
+  assert.equal(metadata.fields.new_source.chars, newSource.length);
+
+  const preview = toolPreview.deriveFileToolPreview({
+    name: "NotebookEdit",
+    arguments: args,
+  });
+  assert.equal(preview.kind, "write");
+  assert.equal(preview.field, "new_source");
+  assert.equal(preview.path, "notebooks/analysis.ipynb");
+  assert.equal(preview.content.chars, newSource.length);
+});
+
+test("tool args progress is monotonic across streaming prefixes and representations", () => {
+  const fullContent = "x".repeat(9000);
+  const prefixArgs = gatewayToolPreview.buildGatewayToolCallPreviewArguments({
+    name: "Write",
+    arguments: { path: "a.txt", content: fullContent.slice(0, 4500) },
+  });
+  const fullArgs = gatewayToolPreview.buildGatewayToolCallPreviewArguments({
+    name: "Write",
+    arguments: { path: "a.txt", content: fullContent },
+  });
+
+  const prefixProgress = toolPreview.toolArgsProgress("Write", prefixArgs);
+  const fullProgress = toolPreview.toolArgsProgress("Write", fullArgs);
+  const rawProgress = toolPreview.toolArgsProgress("Write", {
+    path: "a.txt",
+    content: fullContent,
+  });
+
+  assert.equal(prefixProgress, 4500);
+  assert.equal(fullProgress, 9000);
+  // Raw full args (no meta) must compare equal to the built preview so the
+  // merge guard composes across snapshot and delta representations.
+  assert.equal(rawProgress, fullProgress);
+  assert.ok(prefixProgress < fullProgress);
+  // Untracked tools stay outside the guard.
+  assert.equal(toolPreview.toolArgsProgress("Bash", { command: "ls" }), undefined);
 });
 
 test("uploaded file helpers preserve display text and strip model-hidden metadata", () => {
@@ -1664,31 +1724,32 @@ After`,
 });
 
 test("streaming Write and Edit tool previews expose bounded live argument previews", () => {
-  const missingWrite = uiMessages.getStreamingWriteToolPreview({
+  const missingWrite = toolPreview.deriveFileToolPreview({
     type: "toolCall",
     id: "write-missing",
     name: "Write",
     arguments: { path: "report.md" },
   });
   assert.equal(missingWrite.path, "report.md");
-  assert.equal(missingWrite.hasContent, false);
+  assert.equal(missingWrite.content.has, false);
   assert.equal(missingWrite.content.chars, 0);
   assert.equal(missingWrite.content.lines, 0);
 
   const longContent = `line 1\n${"x".repeat(4100)}`;
-  const writePreview = uiMessages.getStreamingWriteToolPreview({
+  const writePreview = toolPreview.deriveFileToolPreview({
     type: "toolCall",
     id: "write-live",
     name: "Write",
     arguments: { path: "report.md", content: longContent },
   });
-  assert.equal(writePreview.hasContent, true);
+  assert.equal(writePreview.content.has, true);
   assert.equal(writePreview.content.chars, longContent.length);
   assert.equal(writePreview.content.lines, 2);
   assert.equal(writePreview.content.truncated, true);
-  assert.match(writePreview.content.text, /已截断预览/);
+  assert.match(writePreview.content.text, /truncated/);
+  assert.ok(writePreview.content.text.length <= 4100);
 
-  const editPreview = uiMessages.getStreamingEditToolPreview({
+  const editPreview = toolPreview.deriveFileToolPreview({
     type: "toolCall",
     id: "edit-live",
     name: "Edit",
@@ -1701,9 +1762,9 @@ test("streaming Write and Edit tool previews expose bounded live argument previe
     },
   });
   assert.equal(editPreview.path, "src/App.tsx");
-  assert.equal(editPreview.hasOldString, true);
+  assert.equal(editPreview.oldString.has, true);
   assert.equal(editPreview.oldString.chars, 22);
-  assert.equal(editPreview.hasNewString, true);
+  assert.equal(editPreview.newString.has, true);
   assert.equal(editPreview.newString.chars, 0);
   assert.equal(editPreview.expectedReplacements, 1);
   assert.equal(editPreview.replaceAll, true);

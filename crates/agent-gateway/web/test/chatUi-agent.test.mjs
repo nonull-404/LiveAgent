@@ -7,6 +7,7 @@ import { createWebModuleLoader } from "../../test/helpers/load-web-module.mjs";
 const rootDir = fileURLToPath(new URL("../", import.meta.url));
 const uiMessagesLoader = createWebModuleLoader({ rootDir });
 const uiMessages = uiMessagesLoader.loadModule("src/lib/chat/uiMessages.ts");
+const toolPreview = uiMessagesLoader.loadModule("src/lib/chat/toolPreview.ts");
 const hostedSearch = uiMessagesLoader.loadModule("src/lib/chat/hostedSearch.ts");
 const uploadedImagePreview = uiMessagesLoader.loadModule("src/lib/chat/uploadedImagePreview.ts");
 const loader = createWebModuleLoader({
@@ -35,7 +36,7 @@ const loader = createWebModuleLoader({
   },
 });
 
-const { createTurn, applyEventToTurn } = loader.loadModule(
+const { createTurn, applyEventToTurn, rebuildTurnFromSnapshot } = loader.loadModule(
   "src/lib/chat/transcript/turnReducer.ts",
 );
 const { buildRowsFromEntries } = loader.loadModule("src/lib/chat/transcript/rows.ts");
@@ -764,20 +765,19 @@ test("applyEventToTurn merges streamed Write deltas with final call and result",
 });
 
 test("applyEventToTurn preserves streaming preview metadata for Write metrics", () => {
-  const metadataKey = uiMessages.LIVE_TOOL_PREVIEW_META_KEY;
+  const metadataKey = toolPreview.LIVE_TOOL_PREVIEW_META_KEY;
   const previewContent = "head\n...[truncated 9000 chars]...\ntail";
   const previewArgs = {
     path: "src/large.ts",
     content: previewContent,
     [metadataKey]: {
-      version: 1,
+      v: 2,
+      progress: 12000,
       fields: {
         content: {
           chars: 12000,
           lines: 800,
-          previewChars: previewContent.length,
           truncated: true,
-          strategy: "head-tail",
         },
       },
     },
@@ -794,7 +794,7 @@ test("applyEventToTurn preserves streaming preview metadata for Write metrics", 
 
   assert.equal(turn.entries.length, 1);
   assert.equal(turn.entries[0].toolCall.arguments.content, previewContent);
-  const deltaPreview = uiMessages.getStreamingWriteToolPreview(turn.entries[0].toolCall);
+  const deltaPreview = toolPreview.deriveFileToolPreview(turn.entries[0].toolCall);
   assert.equal(deltaPreview.content.chars, 12000);
   assert.equal(deltaPreview.content.lines, 800);
   assert.equal(deltaPreview.content.truncated, true);
@@ -808,10 +808,113 @@ test("applyEventToTurn preserves streaming preview metadata for Write metrics", 
   });
 
   assert.equal(turn.entries.length, 1);
-  const finalPreview = uiMessages.getStreamingWriteToolPreview(turn.entries[0].toolCall);
+  const finalPreview = toolPreview.deriveFileToolPreview(turn.entries[0].toolCall);
   assert.equal(finalPreview.content.text, previewContent);
   assert.equal(finalPreview.content.chars, 12000);
   assert.equal(finalPreview.content.lines, 800);
+});
+
+function writePreviewArgs(chars, content) {
+  return {
+    path: "src/large.ts",
+    content,
+    [toolPreview.LIVE_TOOL_PREVIEW_META_KEY]: {
+      v: 2,
+      progress: chars,
+      fields: { content: { chars, lines: 1, truncated: true } },
+    },
+  };
+}
+
+test("applyEventToTurn never rolls a streaming Write back to lower progress", () => {
+  let turn = newTurn();
+  turn = applyEventToTurn(turn, {
+    type: "tool_call_delta",
+    id: "call-write",
+    name: "Write",
+    arguments: writePreviewArgs(6000, "newer preview"),
+    round: 1,
+  });
+
+  // A stale writer (late delta replay / lagging snapshot echo) must lose.
+  turn = applyEventToTurn(turn, {
+    type: "tool_call_delta",
+    id: "call-write",
+    name: "Write",
+    arguments: writePreviewArgs(4000, "older preview"),
+    round: 1,
+  });
+  assert.equal(turn.entries.length, 1);
+  assert.equal(
+    toolPreview.deriveFileToolPreview(turn.entries[0].toolCall).content.chars,
+    6000,
+  );
+
+  // A newer writer still advances.
+  turn = applyEventToTurn(turn, {
+    type: "tool_call_delta",
+    id: "call-write",
+    name: "Write",
+    arguments: writePreviewArgs(7000, "newest preview"),
+    round: 1,
+  });
+  assert.equal(
+    toolPreview.deriveFileToolPreview(turn.entries[0].toolCall).content.chars,
+    7000,
+  );
+});
+
+test("rebuildTurnFromSnapshot keeps newer delta-built tool args over a lagging snapshot", () => {
+  let turn = newTurn();
+  turn = applyEventToTurn(turn, {
+    type: "tool_call_delta",
+    id: "call-write",
+    name: "Write",
+    arguments: writePreviewArgs(6000, "delta preview"),
+    round: 1,
+  });
+
+  const rebuilt = rebuildTurnFromSnapshot(turn, [
+    {
+      id: "runtime-live-0-tool-call-1-call-write-0",
+      kind: "tool_call",
+      round: 1,
+      toolCall: {
+        type: "toolCall",
+        id: "call-write",
+        name: "Write",
+        // Raw snapshot content at an earlier stream position (no meta):
+        // progress falls back to the raw length and must not win.
+        arguments: { path: "src/large.ts", content: "x".repeat(4500) },
+      },
+      summary: "Write",
+      text: "{}",
+    },
+  ]);
+
+  const entry = rebuilt.entries.find((candidate) => candidate.kind === "tool_call");
+  assert.ok(entry, "expected the snapshot tool_call entry");
+  assert.equal(toolPreview.deriveFileToolPreview(entry.toolCall).content.chars, 6000);
+  assert.equal(entry.toolCall.arguments.content, "delta preview");
+
+  // A snapshot that is ahead of the deltas replaces the args.
+  const advanced = rebuildTurnFromSnapshot(turn, [
+    {
+      id: "runtime-live-0-tool-call-1-call-write-0",
+      kind: "tool_call",
+      round: 1,
+      toolCall: {
+        type: "toolCall",
+        id: "call-write",
+        name: "Write",
+        arguments: { path: "src/large.ts", content: "y".repeat(8000) },
+      },
+      summary: "Write",
+      text: "{}",
+    },
+  ]);
+  const advancedEntry = advanced.entries.find((candidate) => candidate.kind === "tool_call");
+  assert.equal(toolPreview.deriveFileToolPreview(advancedEntry.toolCall).content.chars, 8000);
 });
 
 test("applyEventToTurn snapshots mutable streamed Write arguments", () => {

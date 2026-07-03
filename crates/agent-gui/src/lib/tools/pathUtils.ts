@@ -302,17 +302,18 @@ export class ToolPathResolver {
     if (!skillsRootDir) {
       throw new Error(`${options.label} points to a Skill path, but Skills are not enabled`);
     }
-    const sanitized = sanitizeRelativePath(
-      relativePath ?? "",
-      options.label,
-      options.required === true,
-    );
+    const sanitized = sanitizeRelativePath(relativePath ?? "", options.label, false);
     if (!sanitized && isSkillAccessPolicyRestrictive(this.skillAccessPolicy)) {
       throw new Error(
         buildSkillAccessDeniedMessage({
           operation: operationForIntent(options.intent, options.label),
           allowedSkillNames: this.skillAccessPolicy?.allowedSkillNames,
         }),
+      );
+    }
+    if (!sanitized && options.required === true) {
+      throw new Error(
+        `${options.label} must include the skill name and a file path after skill://, for example "skill://<skill-name>/SKILL.md". "skill://" alone does not identify a file.`,
       );
     }
     const operation = operationForIntent(options.intent, options.label);

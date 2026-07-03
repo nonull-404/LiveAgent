@@ -9,7 +9,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { Type } from "typebox";
 import {
   type BuiltinToolBundle,
-  type BuiltinToolPreflightResult,
   type BuiltinToolResultDetails,
   createBuiltinMetadataMap,
   type DeleteResultDetails,
@@ -38,7 +37,7 @@ type ToolOk<TDetails extends BuiltinToolResultDetails = BuiltinToolResultDetails
 };
 
 const MAX_DISPLAY_IMAGE_PATHS = 12;
-const AUTO_EDIT_FULL_READ_MAX_LINES = 5_000;
+const AUTO_FULL_READ_MAX_LINES = 5_000;
 
 function strictToolParameters(properties: Record<string, unknown>) {
   return Type.Object(properties as any, { additionalProperties: false });
@@ -238,18 +237,6 @@ async function invokeFsToolCommand<T>(params: {
   }
 }
 
-function buildToolErrorResult(toolCall: ToolCall, text: string): ToolResultMessage {
-  return {
-    role: "toolResult",
-    toolCallId: toolCall.id,
-    toolName: toolCall.name,
-    content: [{ type: "text", text }],
-    details: {},
-    isError: true,
-    timestamp: Date.now(),
-  };
-}
-
 export function createFsTools(params: {
   workdir: string;
   fileState: FileToolState;
@@ -286,7 +273,6 @@ export function createFsTools(params: {
     skillAccessPolicy,
     resolveSkillsRootDir,
   });
-  const writePreflightSafePathByToolCallId = new Map<string, string>();
 
   // Loop breaker: models sometimes retry a failing call with identical
   // arguments. Track consecutive identical failures and escalate the error
@@ -323,8 +309,6 @@ export function createFsTools(params: {
   type NormalizedWriteArgs = {
     path: unknown;
     content: string;
-    hasContentArgument: boolean;
-    mode: "rewrite";
   };
 
   function normalizeWriteArgs(args: unknown): NormalizedWriteArgs {
@@ -332,19 +316,12 @@ export function createFsTools(params: {
       args && typeof args === "object" && !Array.isArray(args)
         ? (args as Record<string, unknown>)
         : {};
-    assertKnownArguments("Write", record, ["path", "content", "mode"]);
-    const mode = record.mode;
-    if (mode !== undefined && mode !== null && mode !== "" && mode !== "rewrite") {
-      throw new Error("Write.mode is deprecated. Omit it, or pass rewrite for compatibility.");
-    }
     if ("content" in record && typeof record.content !== "string") {
       throw new Error("Write.content must be a string.");
     }
     return {
       path: record.path,
       content: typeof record.content === "string" ? record.content : "",
-      hasContentArgument: "content" in record,
-      mode: "rewrite",
     };
   }
 
@@ -367,27 +344,6 @@ export function createFsTools(params: {
         path,
       },
     });
-  }
-
-  function completeWriteToolCallForPreflight(
-    toolCall: ToolCall,
-    normalized?: { path?: string; content?: string },
-  ): ToolCall {
-    const args =
-      toolCall.arguments && typeof toolCall.arguments === "object" ? toolCall.arguments : {};
-    return {
-      ...toolCall,
-      arguments: {
-        ...args,
-        ...(typeof normalized?.path === "string" ? { path: normalized.path } : {}),
-        content:
-          typeof normalized?.content === "string"
-            ? normalized.content
-            : typeof args.content === "string"
-              ? args.content
-              : "",
-      },
-    };
   }
 
   const toolRead: Tool = {
@@ -527,23 +483,30 @@ export function createFsTools(params: {
     }),
   };
 
-  const toolWrite: Tool = {
+  const toolWrite: Tool & { prepareArguments?: (args: unknown) => unknown } = {
     name: "Write",
     description:
-      "Create a new text file or fully overwrite an existing workspace or enabled Skill text file. Pass only `path` and `content`; do not set `mode`. For new files, `path` must include the intended filename, for example `notes/todo.txt`; Write creates missing parent directories but does not choose filenames from directory paths. Existing files must have been fully Read first so the tool can reject stale rewrites. Use Edit for small changes.",
+      "Create a new text file or fully overwrite an existing workspace or enabled Skill text file. `path` must include the intended filename, for example `notes/todo.txt`; Write creates missing parent directories but does not choose filenames from directory paths. Overwriting an existing file replaces its entire content and is checked against the file's current on-disk state automatically. Use Edit for small changes.",
+    // `path` is declared before `content` on purpose: models tend to emit
+    // arguments in schema order, and a path that streams first keeps live
+    // previews and transport recovery well-formed for large contents.
     parameters: strictToolParameters({
       path: Type.String({
         description:
           "Required file path. Prefer the workspace-relative or skill:// form returned by other tools; absolute and ~/... forms are auto-normalized. Must resolve inside the workspace or an enabled Skill.",
       }),
       content: Type.String({ description: "Entire text content to write" }),
-      mode: Type.Optional(
-        Type.Union([Type.Literal("rewrite"), Type.Literal("")], {
-          description:
-            "Deprecated compatibility field. Omit this argument; empty string and rewrite are accepted as rewrite.",
-        }),
-      ),
     }),
+    // Legacy tolerance: replayed histories teach some models to send the
+    // retired `mode` field; strip it before schema validation instead of
+    // failing the call.
+    prepareArguments: (args) => {
+      if (args && typeof args === "object" && !Array.isArray(args) && "mode" in args) {
+        const { mode: _legacyMode, ...rest } = args as Record<string, unknown>;
+        return rest;
+      }
+      return args;
+    },
   };
 
   const toolEdit: Tool = {
@@ -704,6 +667,7 @@ export function createFsTools(params: {
   const allowedArgumentsByToolName: Record<string, readonly string[]> = {
     Read: ["path", "start_line", "limit", "page_start", "page_limit", "cell_start", "cell_limit"],
     Image: ["path", "paths", "url", "urls", "base64", "base64s", "mimeType", "source", "sources"],
+    // "mode" is legacy tolerance: no longer in the schema, silently ignored.
     Write: ["path", "content", "mode"],
     Edit: ["path", "old_string", "new_string", "expected_replacements", "replace_all"],
     Delete: ["path"],
@@ -1029,28 +993,33 @@ export function createFsTools(params: {
     };
   }
 
-  function buildEditFullReadLimitMessage(resolved: ResolvedPath, totalLines: number) {
+  function buildFullReadLimitMessage(toolName: string, resolved: ResolvedPath, totalLines: number) {
     const target = formatResolvedTarget(resolved);
-    return `Edit requires a full-file Read first: ${target} has ${totalLines} lines, which exceeds the automatic full-read limit (${AUTO_EDIT_FULL_READ_MAX_LINES}). Call Read with path="${target}" and limit=${totalLines}, then retry Edit with the same path.`;
+    return `${toolName} requires a full-file Read first: ${target} has ${totalLines} lines, which exceeds the automatic full-read limit (${AUTO_FULL_READ_MAX_LINES}). Call Read with path="${target}" and limit=${totalLines}, then retry ${toolName} with the same path.`;
   }
 
-  async function primeFullTextSnapshotForEdit(params: {
+  async function primeFullTextSnapshot(params: {
+    toolName: "Edit" | "Write";
     resolved: ResolvedPath;
     path: string;
     signal?: AbortSignal;
+    status?: PathStatusCommandResponse;
   }) {
-    const status = await readPathStatus("Edit", params.resolved, params.path);
+    const status =
+      params.status ?? (await readPathStatus(params.toolName, params.resolved, params.path));
     const key = statePathKey(params.resolved, status.fileId);
     const existingSnapshot = fileState.getLatestFullText(key);
     if (existingSnapshot) {
-      return { snapshot: existingSnapshot, autoRead: false };
+      return { snapshot: existingSnapshot, autoRead: false, status };
     }
 
     const latest = fileState.getLatest(key);
-    let readLimit = AUTO_EDIT_FULL_READ_MAX_LINES;
+    let readLimit = AUTO_FULL_READ_MAX_LINES;
     if (latest?.kind === "text" && latest.totalLines > 0) {
-      if (latest.totalLines > AUTO_EDIT_FULL_READ_MAX_LINES) {
-        throw new Error(buildEditFullReadLimitMessage(params.resolved, latest.totalLines));
+      if (latest.totalLines > AUTO_FULL_READ_MAX_LINES) {
+        throw new Error(
+          buildFullReadLimitMessage(params.toolName, params.resolved, latest.totalLines),
+        );
       }
       readLimit = latest.totalLines;
     }
@@ -1065,15 +1034,17 @@ export function createFsTools(params: {
 
     const snapshot = fileState.getLatestFullText(key);
     if (snapshot) {
-      return { snapshot, autoRead: true };
+      return { snapshot, autoRead: true, status };
     }
 
     const latestAfterRead = fileState.getLatest(key);
     if (latestAfterRead?.kind === "text" && latestAfterRead.isPartialView) {
-      throw new Error(buildEditFullReadLimitMessage(params.resolved, latestAfterRead.totalLines));
+      throw new Error(
+        buildFullReadLimitMessage(params.toolName, params.resolved, latestAfterRead.totalLines),
+      );
     }
 
-    throw new Error(buildRequiresFullReadText("Edit", params.resolved));
+    throw new Error(buildRequiresFullReadText(params.toolName, params.resolved));
   }
 
   function normalizeRequiredImageSource(input: unknown, label: string) {
@@ -1398,26 +1369,38 @@ export function createFsTools(params: {
     const content = writeArgs.content;
 
     const status = await readPathStatus("Write", resolved, path);
-    const key = statePathKey(resolved, status.fileId);
-    const latest = fileState.getLatest(key);
-    if (latest?.kind === "text" && latest.isPartialView) {
-      throw new Error(buildRequiresFullReadText("Write", resolved, latest.totalLines));
+    if (status.exists && status.kind === "dir") {
+      throw new Error(buildWriteDirectoryText(resolved));
     }
-    const fullSnapshot = fileState.getLatestFullText(key);
+    // Overwriting an existing file needs a full-text snapshot as the staleness
+    // baseline; auto-read it when the model has not Read the file itself.
+    const primed = status.exists
+      ? await primeFullTextSnapshot({ toolName: "Write", resolved, path, signal, status })
+      : null;
 
-    const res = await invokeFsToolCommand<WriteCommandResponse>({
-      toolName: "Write",
-      resolved,
-      command: "fs_write_text",
-      args: {
-        workdir: resolved.root,
-        path,
-        content,
-        mode: "rewrite",
-        expected_mtime_ms: fullSnapshot?.mtimeMs,
-        expected_content_hash: fullSnapshot?.contentHash,
-      },
-    });
+    let res: WriteCommandResponse;
+    try {
+      res = await invokeFsToolCommand<WriteCommandResponse>({
+        toolName: "Write",
+        resolved,
+        command: "fs_write_text",
+        args: {
+          workdir: resolved.root,
+          path,
+          content,
+          mode: "rewrite",
+          expected_mtime_ms: primed?.snapshot.mtimeMs,
+          expected_content_hash: primed?.snapshot.contentHash,
+        },
+      });
+    } catch (error) {
+      if (primed?.autoRead) {
+        // The auto-read snapshot was never shown to the model; drop it so a
+        // follow-up Read returns real content instead of an "unchanged" stub.
+        fileState.clear(statePathKey(resolved, status.fileId));
+      }
+      throw error;
+    }
 
     const details: WriteResultDetails = {
       kind: "write",
@@ -1441,93 +1424,14 @@ export function createFsTools(params: {
       content: [
         {
           type: "text",
-          text: details.existedBefore
-            ? `File updated successfully at: ${formatResolvedTarget(resolved)}`
-            : `File created successfully at: ${formatResolvedTarget(resolved)}`,
+          text:
+            (details.existedBefore
+              ? `File updated successfully at: ${formatResolvedTarget(resolved)}`
+              : `File created successfully at: ${formatResolvedTarget(resolved)}`) +
+            (primed?.autoRead ? "\nautoRead=full" : ""),
         },
       ],
       details,
-    };
-  }
-
-  async function preflightWrite(
-    toolCall: ToolCall,
-    signal?: AbortSignal,
-  ): Promise<BuiltinToolPreflightResult | null> {
-    if (signal?.aborted) return null;
-
-    const writeArgs = normalizeWriteArgs(toolCall.arguments);
-    const rawPath = typeof writeArgs.path === "string" ? writeArgs.path : "";
-    if (!rawPath.trim()) return null;
-
-    const { resolved, path } = await resolveWriteTarget(writeArgs);
-    if (!path) {
-      return {
-        toolCall: completeWriteToolCallForPreflight(toolCall, {
-          content: writeArgs.content,
-        }),
-        toolResult: buildToolErrorResult(
-          toolCall,
-          annotateRepeatedFailure(toolCall, "Write.path must identify a file"),
-        ),
-      };
-    }
-
-    const preflightPathKey = `${resolved.root}\0${path}`;
-    if (writePreflightSafePathByToolCallId.get(toolCall.id) === preflightPathKey) {
-      return null;
-    }
-
-    const status = await readPathStatus("Write", resolved, path);
-    if (!status.exists) {
-      writePreflightSafePathByToolCallId.set(toolCall.id, preflightPathKey);
-      return null;
-    }
-
-    const key = statePathKey(resolved, status.fileId);
-    const latest = fileState.getLatest(key);
-    if (latest?.kind === "text" && latest.isPartialView) {
-      return {
-        toolCall: completeWriteToolCallForPreflight(toolCall, {
-          path: resolved.displayPath,
-          content: writeArgs.content,
-        }),
-        toolResult: buildToolErrorResult(
-          toolCall,
-          annotateRepeatedFailure(
-            toolCall,
-            buildRequiresFullReadText("Write", resolved, latest.totalLines),
-          ),
-        ),
-      };
-    }
-
-    if (fileState.getLatestFullText(key)) {
-      writePreflightSafePathByToolCallId.set(toolCall.id, preflightPathKey);
-      return null;
-    }
-
-    const completedToolCall = completeWriteToolCallForPreflight(toolCall, {
-      path: resolved.displayPath,
-      content: writeArgs.content,
-    });
-    if (status.kind === "dir") {
-      if (!writeArgs.hasContentArgument) return null;
-      return {
-        toolCall: completedToolCall,
-        toolResult: buildToolErrorResult(
-          toolCall,
-          annotateRepeatedFailure(toolCall, buildWriteDirectoryText(resolved)),
-        ),
-      };
-    }
-
-    return {
-      toolCall: completedToolCall,
-      toolResult: buildToolErrorResult(
-        toolCall,
-        annotateRepeatedFailure(toolCall, buildRequiresFullReadText("Write", resolved)),
-      ),
     };
   }
 
@@ -1551,27 +1455,39 @@ export function createFsTools(params: {
       throw new Error("Edit.old_string must be a non-empty string");
     }
 
-    const { snapshot, autoRead } = await primeFullTextSnapshotForEdit({
+    const primed = await primeFullTextSnapshot({
+      toolName: "Edit",
       resolved,
       path,
       signal,
     });
+    const { snapshot, autoRead } = primed;
 
-    const res = await invokeFsToolCommand<EditCommandResponse>({
-      toolName: "Edit",
-      resolved,
-      command: "fs_edit_text",
-      args: {
-        workdir: resolved.root,
-        path,
-        old_string,
-        new_string,
-        expected_replacements,
-        replace_all,
-        expected_mtime_ms: snapshot.mtimeMs,
-        expected_content_hash: snapshot.contentHash,
-      },
-    });
+    let res: EditCommandResponse;
+    try {
+      res = await invokeFsToolCommand<EditCommandResponse>({
+        toolName: "Edit",
+        resolved,
+        command: "fs_edit_text",
+        args: {
+          workdir: resolved.root,
+          path,
+          old_string,
+          new_string,
+          expected_replacements,
+          replace_all,
+          expected_mtime_ms: snapshot.mtimeMs,
+          expected_content_hash: snapshot.contentHash,
+        },
+      });
+    } catch (error) {
+      if (autoRead) {
+        // The auto-read snapshot was never shown to the model; drop it so a
+        // follow-up Read returns real content instead of an "unchanged" stub.
+        fileState.clear(statePathKey(resolved, primed.status.fileId));
+      }
+      throw error;
+    }
 
     const details: EditResultDetails = {
       kind: "edit",
@@ -1940,34 +1856,10 @@ export function createFsTools(params: {
     }
   }
 
-  async function preflightToolCall(
-    toolCall: ToolCall,
-    signal?: AbortSignal,
-  ): Promise<BuiltinToolPreflightResult | null> {
-    try {
-      switch (toolCall.name) {
-        case "Write":
-          return await preflightWrite(toolCall, signal);
-        default:
-          return null;
-      }
-    } catch (err) {
-      return {
-        toolCall:
-          toolCall.name === "Write" ? completeWriteToolCallForPreflight(toolCall) : toolCall,
-        toolResult: buildToolErrorResult(
-          toolCall,
-          annotateRepeatedFailure(toolCall, asErrorMessage(err)),
-        ),
-      };
-    }
-  }
-
   return {
     groupId: "fs",
     tools,
     executeToolCall,
-    preflightToolCall,
     metadataByName: createBuiltinMetadataMap([
       [
         "Read",

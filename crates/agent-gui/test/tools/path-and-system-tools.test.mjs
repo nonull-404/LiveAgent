@@ -253,6 +253,34 @@ test("ToolPathResolver resolves enabled Skill paths and gates external paths by 
   );
 });
 
+test("ToolPathResolver teaches the skill:// shape when the skill path is empty", async () => {
+  const resolver = new pathUtils.ToolPathResolver({
+    workdir: "/workspace/project",
+    skillsRootEnabled: true,
+    skillsRootDir: "/Users/me/.liveagent/skills",
+  });
+
+  await assert.rejects(
+    () =>
+      resolver.resolvePath("skill://", {
+        label: "Write.path",
+        intent: "write",
+        required: true,
+      }),
+    /Write\.path must include the skill name and a file path after skill:\/\/.*skill:\/\/<skill-name>\/SKILL\.md/,
+  );
+
+  // Listing the skills root (required: false) still resolves.
+  const skillsRoot = await resolver.resolvePath("skill://", {
+    label: "List.path",
+    intent: "read",
+    required: false,
+  });
+  assert.equal(skillsRoot.scope, "skill");
+  assert.equal(skillsRoot.relativePath, undefined);
+  assert.equal(skillsRoot.root, "/Users/me/.liveagent/skills");
+});
+
 test("ToolPathResolver prefers the skill scope when the skills root nests inside the workspace", async () => {
   const resolver = new pathUtils.ToolPathResolver({
     workdir: "/workspace/project",
@@ -628,7 +656,7 @@ test("file tools allow direct mutations inside enabled Skills when mutation is g
   ]);
 });
 
-test("Write schema accepts legacy empty mode without exposing it as required behavior", async () => {
+test("Write strips legacy mode before schema validation and omits it from the schema", async () => {
   const fsLoader = createTsModuleLoader();
   const fsTools = fsLoader.loadModule("src/lib/tools/fsTools.ts");
   const fileToolState = fsLoader.loadModule("src/lib/tools/fileToolState.ts");
@@ -639,39 +667,68 @@ test("Write schema accepts legacy empty mode without exposing it as required beh
   const writeTool = bundle.tools.find((tool) => tool.name === "Write");
 
   assert.ok(writeTool);
-  assert.match(writeTool.description, /Pass only `path` and `content`; do not set `mode`/);
-  const args = validateToolArguments(writeTool, {
-    type: "toolCall",
-    id: "legacy-empty-mode",
-    name: "Write",
-    arguments: {
-      path: "test8/gomoku.html",
-      mode: "",
-      content: "",
-    },
-  });
+  assert.doesNotMatch(writeTool.description, /mode/);
+  assert.deepEqual(Object.keys(writeTool.parameters.properties), ["path", "content"]);
 
-  assert.deepEqual(args, {
+  const prepared = writeTool.prepareArguments({
     path: "test8/gomoku.html",
     mode: "",
     content: "",
   });
+  const args = validateToolArguments(writeTool, {
+    type: "toolCall",
+    id: "legacy-empty-mode",
+    name: "Write",
+    arguments: prepared,
+  });
+
+  assert.deepEqual(args, {
+    path: "test8/gomoku.html",
+    content: "",
+  });
 });
 
-test("Write preflight blocks existing files before content streaming but allows new files", async () => {
+test("Write auto-primes a full text snapshot before overwriting an unread file", async () => {
   const invocations = [];
   const fsLoader = createTsModuleLoader({
     mocks: {
       "@tauri-apps/api/core": {
         async invoke(command, args) {
           invocations.push({ command, args });
-          assert.equal(command, "fs_path_status");
+          if (command === "fs_path_status") {
+            return {
+              path: args.path,
+              exists: args.path === "existing.html",
+              kind: args.path === "existing.html" ? "file" : null,
+              sizeBytes: args.path === "existing.html" ? 128 : null,
+              mtimeMs: args.path === "existing.html" ? 44 : null,
+              fileId: null,
+            };
+          }
+          if (command === "fs_read_text") {
+            assert.equal(args.path, "existing.html");
+            assert.equal(args.limit, 5000);
+            return {
+              kind: "text",
+              path: "existing.html",
+              content: "1\t<html>old</html>\n",
+              truncated: false,
+              startLine: 1,
+              numLines: 1,
+              totalLines: 1,
+              isPartialView: false,
+              mtimeMs: 44,
+              contentHash: "before-hash",
+            };
+          }
+          assert.equal(command, "fs_write_text");
           return {
             path: args.path,
-            exists: args.path === "existing.html",
-            kind: args.path === "existing.html" ? "file" : null,
-            sizeBytes: args.path === "existing.html" ? 128 : null,
-            mtimeMs: args.path === "existing.html" ? 44 : null,
+            existedBefore: args.path === "existing.html",
+            bytesWritten: args.content.length,
+            mtimeMs: 45,
+            contentHash: "after-hash",
+            totalLines: 1,
           };
         },
       },
@@ -684,46 +741,135 @@ test("Write preflight blocks existing files before content streaming but allows 
     fileState: fileToolState.createFileToolState(),
   });
 
-  const blocked = await bundle.preflightToolCall({
+  const overwritten = await bundle.executeToolCall({
     type: "toolCall",
-    id: "stream-write-existing",
+    id: "write-existing-unread",
     name: "Write",
     arguments: {
       path: "existing.html",
+      content: "<html>new</html>\n",
     },
   });
-  const allowed = await bundle.preflightToolCall({
+
+  assert.equal(overwritten.isError, false);
+  assert.match(overwritten.content[0].text, /File updated successfully at: existing\.html/);
+  assert.match(overwritten.content[0].text, /autoRead=full/);
+  assert.deepEqual(
+    invocations.map((call) => call.command),
+    ["fs_path_status", "fs_read_text", "fs_write_text"],
+  );
+  const writeInvocation = invocations.at(-1);
+  assert.equal(writeInvocation.args.expected_mtime_ms, 44);
+  assert.equal(writeInvocation.args.expected_content_hash, "before-hash");
+
+  invocations.length = 0;
+  const created = await bundle.executeToolCall({
     type: "toolCall",
-    id: "stream-write-new",
+    id: "write-new-file",
     name: "Write",
     arguments: {
       path: "new.html",
+      content: "<html>fresh</html>\n",
     },
   });
 
-  assert.equal(blocked.toolResult.isError, true);
-  assert.match(blocked.toolResult.content[0].text, /full-file Read first/);
-  assert.equal(blocked.toolCall.arguments.content, "");
-  assert.equal(allowed, null);
-  assert.deepEqual(invocations, [
-    {
-      command: "fs_path_status",
-      args: {
-        workdir: "/workspace",
-        path: "existing.html",
-      },
-    },
-    {
-      command: "fs_path_status",
-      args: {
-        workdir: "/workspace",
-        path: "new.html",
-      },
-    },
-  ]);
+  assert.equal(created.isError, false);
+  assert.doesNotMatch(created.content[0].text, /autoRead/);
+  assert.deepEqual(
+    invocations.map((call) => call.command),
+    ["fs_path_status", "fs_write_text"],
+  );
+  assert.equal(invocations.at(-1).args.expected_mtime_ms, undefined);
+  assert.equal(invocations.at(-1).args.expected_content_hash, undefined);
 });
 
-test("Write preflight gives generic filename guidance for directory paths", async () => {
+test("Write drops the auto-primed snapshot when the backend write fails", async () => {
+  const fileContent = "1\t<html>secret-on-disk</html>\n";
+  let failWrites = true;
+  const fsLoader = createTsModuleLoader({
+    mocks: {
+      "@tauri-apps/api/core": {
+        async invoke(command, args) {
+          if (command === "fs_path_status") {
+            return {
+              path: args.path,
+              exists: true,
+              kind: "file",
+              sizeBytes: 30,
+              mtimeMs: 44,
+              fileId: null,
+            };
+          }
+          if (command === "fs_read_text") {
+            return {
+              kind: "text",
+              path: args.path,
+              content: fileContent,
+              truncated: false,
+              startLine: 1,
+              numLines: 1,
+              totalLines: 1,
+              isPartialView: false,
+              mtimeMs: 44,
+              contentHash: "disk-hash",
+            };
+          }
+          assert.equal(command, "fs_write_text");
+          if (failWrites) {
+            throw { code: "io", message: "Permission denied", path: args.path };
+          }
+          return {
+            path: args.path,
+            existedBefore: true,
+            bytesWritten: args.content.length,
+            mtimeMs: 45,
+            contentHash: "after-hash",
+            totalLines: 1,
+          };
+        },
+      },
+    },
+  });
+  const fsTools = fsLoader.loadModule("src/lib/tools/fsTools.ts");
+  const fileToolState = fsLoader.loadModule("src/lib/tools/fileToolState.ts");
+  const bundle = fsTools.createFsTools({
+    workdir: "/workspace",
+    fileState: fileToolState.createFileToolState(),
+  });
+
+  const failed = await bundle.executeToolCall({
+    type: "toolCall",
+    id: "write-fails-after-prime",
+    name: "Write",
+    arguments: { path: "locked.html", content: "<html>new</html>\n" },
+  });
+  assert.equal(failed.isError, true);
+
+  // The auto-primed snapshot must not survive the failed write: a follow-up
+  // Read has to return the real content, never an "unchanged" stub for
+  // content the model has never seen.
+  const read = await bundle.executeToolCall({
+    type: "toolCall",
+    id: "read-after-failed-write",
+    name: "Read",
+    arguments: { path: "locked.html" },
+  });
+  assert.equal(read.isError, false);
+  assert.doesNotMatch(read.content[0].text, /unchanged since the previous Read/);
+  assert.match(read.content[0].text, /secret-on-disk/);
+
+  failWrites = false;
+  const retried = await bundle.executeToolCall({
+    type: "toolCall",
+    id: "write-retry-after-read",
+    name: "Write",
+    arguments: { path: "locked.html", content: "<html>new</html>\n" },
+  });
+  assert.equal(retried.isError, false);
+  assert.doesNotMatch(retried.content[0].text, /autoRead/);
+});
+
+test("Write rejects directory paths with filename guidance before touching the backend", async () => {
   const invocations = [];
   const fsLoader = createTsModuleLoader({
     mocks: {
@@ -752,11 +898,10 @@ test("Write preflight gives generic filename guidance for directory paths", asyn
   const writeTool = bundle.tools.find((tool) => tool.name === "Write");
   assert.match(writeTool.description, /notes\/todo\.txt/);
   assert.match(writeTool.description, /does not choose filenames from directory paths/);
-  assert.match(writeTool.description, /do not set `mode`/);
 
-  const blocked = await bundle.preflightToolCall({
+  const blocked = await bundle.executeToolCall({
     type: "toolCall",
-    id: "stream-write-directory",
+    id: "write-directory",
     name: "Write",
     arguments: {
       path: "output",
@@ -764,11 +909,10 @@ test("Write preflight gives generic filename guidance for directory paths", asyn
     },
   });
 
-  assert.equal(blocked.toolResult.isError, true);
-  assert.match(blocked.toolResult.content[0].text, /directory, not a file: output/);
-  assert.match(blocked.toolResult.content[0].text, /path="output\/notes\.md"/);
-  assert.match(blocked.toolResult.content[0].text, /no separate create-directory step/);
-  assert.equal(blocked.toolCall.arguments.content, "");
+  assert.equal(blocked.isError, true);
+  assert.match(blocked.content[0].text, /directory, not a file: output/);
+  assert.match(blocked.content[0].text, /path="output\/notes\.md"/);
+  assert.match(blocked.content[0].text, /no separate create-directory step/);
   assert.deepEqual(invocations, [
     {
       command: "fs_path_status",
@@ -787,23 +931,14 @@ test("Write does not infer filenames from content when path is a directory", asy
       "@tauri-apps/api/core": {
         async invoke(command, args) {
           invocations.push({ command, args });
-          if (command === "fs_path_status") {
-            return {
-              path: args.path,
-              exists: true,
-              kind: "dir",
-              sizeBytes: 96,
-              mtimeMs: 55,
-              fileId: null,
-            };
-          }
-          assert.equal(command, "fs_write_text");
-          assert.equal(args.path, "test8");
-          throw {
-            code: "not_a_file",
-            message: "Cannot write to a directory path",
-            path: "test8",
-            workdir: "/workspace",
+          assert.equal(command, "fs_path_status");
+          return {
+            path: args.path,
+            exists: true,
+            kind: "dir",
+            sizeBytes: 96,
+            mtimeMs: 55,
+            fileId: null,
           };
         },
       },
@@ -837,17 +972,6 @@ test("Write does not infer filenames from content when path is a directory", asy
       args: {
         workdir: "/workspace",
         path: "test8",
-      },
-    },
-    {
-      command: "fs_write_text",
-      args: {
-        workdir: "/workspace",
-        path: "test8",
-        content: '{"ok":true}\n',
-        mode: "rewrite",
-        expected_mtime_ms: undefined,
-        expected_content_hash: undefined,
       },
     },
   ]);
@@ -967,20 +1091,19 @@ test("Write replays the Gomoku failure sequence with generic directory recovery 
       type: "toolCall",
       id: "gomoku-empty-mode",
       name: "Write",
-      arguments: {
+      arguments: writeTool.prepareArguments({
         path: "test8/gomoku.html",
         mode: "",
         content: "",
-      },
+      }),
     }),
     {
       path: "test8/gomoku.html",
-      mode: "",
       content: "",
     },
   );
 
-  const directoryBlocked = await bundle.preflightToolCall({
+  const directoryBlocked = await bundle.executeToolCall({
     type: "toolCall",
     id: "gomoku-directory-empty",
     name: "Write",
@@ -990,10 +1113,10 @@ test("Write replays the Gomoku failure sequence with generic directory recovery 
     },
   });
 
-  assert.equal(directoryBlocked.toolResult.isError, true);
-  assert.match(directoryBlocked.toolResult.content[0].text, /directory, not a file: test8/);
-  assert.match(directoryBlocked.toolResult.content[0].text, /path="test8\/notes\.md"/);
-  assert.doesNotMatch(directoryBlocked.toolResult.content[0].text, /mode constant|index\.html/);
+  assert.equal(directoryBlocked.isError, true);
+  assert.match(directoryBlocked.content[0].text, /directory, not a file: test8/);
+  assert.match(directoryBlocked.content[0].text, /path="test8\/notes\.md"/);
+  assert.doesNotMatch(directoryBlocked.content[0].text, /mode constant|index\.html/);
 
   const recovered = await bundle.executeToolCall({
     type: "toolCall",
@@ -2800,7 +2923,7 @@ test("repeated identical failing calls escalate with a loop-breaking notice", as
   });
 
   const callWriteToDirectory = (id) =>
-    bundle.preflightToolCall({
+    bundle.executeToolCall({
       type: "toolCall",
       id,
       name: "Write",
@@ -2808,22 +2931,21 @@ test("repeated identical failing calls escalate with a loop-breaking notice", as
     });
 
   const first = await callWriteToDirectory("loop-1");
-  assert.equal(first.toolResult.isError, true);
-  assert.doesNotMatch(first.toolResult.content[0].text, /times in a row/);
+  assert.equal(first.isError, true);
+  assert.doesNotMatch(first.content[0].text, /times in a row/);
 
   const second = await callWriteToDirectory("loop-2");
-  assert.match(second.toolResult.content[0].text, /failed 2 times in a row/);
-  assert.match(second.toolResult.content[0].text, /Do not retry with the same arguments/);
+  assert.match(second.content[0].text, /failed 2 times in a row/);
+  assert.match(second.content[0].text, /Do not retry with the same arguments/);
 
   const third = await callWriteToDirectory("loop-3");
-  assert.match(third.toolResult.content[0].text, /failed 3 times in a row/);
+  assert.match(third.content[0].text, /failed 3 times in a row/);
 
-  // Re-evaluating the same physical tool call (streaming preflight) must not
-  // inflate the counter.
+  // Re-running the same physical tool call id must not inflate the counter.
   const replay = await callWriteToDirectory("loop-3");
-  assert.match(replay.toolResult.content[0].text, /failed 3 times in a row/);
+  assert.match(replay.content[0].text, /failed 3 times in a row/);
 
-  // A different failing call resets the consecutive counter.
+  // A different failing call with the same shape keeps escalating.
   const different = await callWriteToDirectory("loop-4");
-  assert.match(different.toolResult.content[0].text, /failed 4 times in a row/);
+  assert.match(different.content[0].text, /failed 4 times in a row/);
 });

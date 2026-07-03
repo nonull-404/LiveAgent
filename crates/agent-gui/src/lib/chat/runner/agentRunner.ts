@@ -1,7 +1,6 @@
 import { Agent, type AgentTool } from "@earendil-works/pi-agent-core";
 import type {
   AssistantMessage,
-  AssistantMessageEvent,
   Context,
   Message,
   ToolCall,
@@ -61,6 +60,7 @@ import {
 import { createSubagentScheduler, type SubagentScheduler } from "../subagent/subagentScheduler";
 import { comparableToolCall } from "./flattenedToolCallText";
 import { recoverAssistantSeedToolCalls } from "./seedToolCalls";
+import { wrapStreamWithToolCallArgumentGuard } from "./toolCallArgumentGuard";
 
 function createLinkedAbortSignal(signals: Array<AbortSignal | undefined>): {
   signal?: AbortSignal;
@@ -196,7 +196,7 @@ export function buildToolsSuffix(
     }
     if (canWrite) {
       lines.push(
-        "- Existing files: Read the full file before Write or Edit; stale writes are rejected, so re-Read if needed.",
+        "- Existing files: Write and Edit check the file's current on-disk state automatically; a separate Read is only needed for very large files (>5000 lines). Stale writes are rejected — re-Read and retry if the file changed underneath you.",
         "- New files: call Write with a file path that includes the filename and the full content; parent directories are created automatically. There is no separate create-directory step — to create a directory, Write a file inside it.",
       );
     }
@@ -214,7 +214,7 @@ export function buildToolsSuffix(
     }
     if (has("Write")) {
       lines.push(
-        "- Write fully creates or overwrites one text file. Do not set `mode`. The path must include the intended filename, not just a directory.",
+        "- Write fully creates or overwrites one text file. The path must include the intended filename, not just a directory.",
       );
     }
     if (has("Edit")) {
@@ -647,10 +647,6 @@ export async function runAssistantWithTools(params: {
     signal?: AbortSignal,
     context?: ToolExecutionEventContext,
   ) => Promise<Message>;
-  preflightToolCall?: (
-    toolCall: ToolCall,
-    signal?: AbortSignal,
-  ) => Promise<{ toolCall?: ToolCall; toolResult: ToolResultMessage } | null>;
   onTurnStart?: (round: number) => void;
   onTextDelta: (delta: string, round: number) => void;
   onThinkingDelta?: (delta: string, round: number) => void;
@@ -723,7 +719,11 @@ export async function runAssistantWithTools(params: {
 
     const toolResultErrorFlags = new Map<string, boolean>();
     const toolCallsById = new Map<string, ToolCall>();
-    const streamPreflightToolResults = new Map<string, ToolResultMessage>();
+    const incompleteToolCallArguments = new Map<string, string>();
+    const refusedTruncatedToolCallIds = new Set<string>();
+    const buildTruncatedToolCallText = (toolName: string, reason: string) =>
+      `${toolName} was not executed: its arguments were truncated in transit (${reason}). ` +
+      `This is a transport error, not a mistake in your call — re-issue the complete ${toolName} call with full arguments.`;
     const parallelBatchKeyByToolCallId = new Map<string, string>();
     const parallelToolBatches = new Map<string, ParallelToolBatch>();
     const llmTools = params.tools ?? [];
@@ -1093,16 +1093,6 @@ export async function runAssistantWithTools(params: {
         });
         toolCallsById.set(toolCall.id, toolCall);
 
-        const preflightToolResult = streamPreflightToolResults.get(toolCall.id);
-        if (preflightToolResult) {
-          streamPreflightToolResults.delete(toolCall.id);
-          toolResultErrorFlags.set(toolCall.id, Boolean(preflightToolResult.isError));
-          return {
-            content: preflightToolResult.content,
-            details: preflightToolResult.details ?? {},
-          };
-        }
-
         if (tool.name === "Bash" || tool.name === "Agent") {
           const batchKey = parallelBatchKeyByToolCallId.get(toolCallId);
           if (batchKey) {
@@ -1150,118 +1140,6 @@ export async function runAssistantWithTools(params: {
     agentTools = [...visibleAgentTools, ...hiddenProviderNativeWebSearchAgentTools];
 
     let streamRound = 0;
-    function getToolCallFromStreamEvent(event: AssistantMessageEvent) {
-      if (
-        event.type !== "toolcall_start" &&
-        event.type !== "toolcall_delta" &&
-        event.type !== "toolcall_end"
-      ) {
-        return null;
-      }
-
-      const toolCall =
-        event.type === "toolcall_end" ? event.toolCall : event.partial.content[event.contentIndex];
-      return toolCall?.type === "toolCall"
-        ? {
-            contentIndex: event.contentIndex,
-            toolCall,
-            partial: event.partial,
-          }
-        : null;
-    }
-
-    function buildPreflightToolUseAssistant(
-      partial: AssistantMessage,
-      contentIndex: number,
-      toolCall: ToolCall,
-    ): AssistantMessage {
-      const content = partial.content.slice();
-      content[contentIndex] = toolCall;
-      return {
-        ...partial,
-        content,
-        stopReason: "toolUse",
-        errorMessage: undefined,
-      };
-    }
-
-    function wrapStreamWithToolPreflight(
-      source: ReturnType<typeof streamSimpleByApi>,
-      signal: AbortSignal | undefined,
-      abortEarly: () => void,
-      cleanup: () => void,
-    ): ReturnType<typeof streamSimpleByApi> {
-      let preflightFinalMessage: AssistantMessage | null = null;
-
-      return {
-        async *[Symbol.asyncIterator]() {
-          const iterator = source[Symbol.asyncIterator]();
-          try {
-            while (true) {
-              const next = await iterator.next();
-              if (next.done) return;
-
-              const event = next.value;
-              const candidate = getToolCallFromStreamEvent(event);
-              const effectiveToolCall = candidate
-                ? normalizeToolCallNameForExecution(candidate.toolCall)
-                : null;
-              if (!candidate || !effectiveToolCall || !params.preflightToolCall) {
-                yield event;
-                continue;
-              }
-
-              const preflight = await params.preflightToolCall(effectiveToolCall, signal);
-
-              if (!preflight) {
-                yield event;
-                continue;
-              }
-
-              const completedToolCall = normalizeToolCallNameForExecution(
-                preflight.toolCall ?? effectiveToolCall,
-              );
-              toolCallsById.set(completedToolCall.id, completedToolCall);
-              streamPreflightToolResults.set(completedToolCall.id, {
-                ...preflight.toolResult,
-                toolCallId: completedToolCall.id,
-                toolName: completedToolCall.name,
-              });
-              preflightFinalMessage = buildPreflightToolUseAssistant(
-                candidate.partial,
-                candidate.contentIndex,
-                completedToolCall,
-              );
-
-              abortEarly();
-              await iterator.return?.();
-
-              yield event;
-              if (event.type !== "toolcall_end") {
-                yield {
-                  type: "toolcall_end",
-                  contentIndex: candidate.contentIndex,
-                  toolCall: completedToolCall,
-                  partial: preflightFinalMessage,
-                };
-              }
-              yield {
-                type: "done",
-                reason: "toolUse",
-                message: preflightFinalMessage,
-              };
-              return;
-            }
-          } finally {
-            cleanup();
-          }
-        },
-        result() {
-          return preflightFinalMessage ? Promise.resolve(preflightFinalMessage) : source.result();
-        },
-      } as unknown as ReturnType<typeof streamSimpleByApi>;
-    }
-
     const streamFn = (streamModel: typeof model, streamContext: Context, options?: any) => {
       const round = ++streamRound;
       const streamTools =
@@ -1285,11 +1163,6 @@ export async function runAssistantWithTools(params: {
       const hostedSearchProbeId = shouldProbeHostedSearch
         ? createHostedSearchProbeId(params.providerId)
         : undefined;
-      const earlyPreflightAbortController = new AbortController();
-      const streamAbortSignal = createLinkedAbortSignal([
-        options?.signal,
-        earlyPreflightAbortController.signal,
-      ]);
       let streamOptions: StreamOptionsEx = {
         ...(options ?? {}),
         apiKey: options?.apiKey ?? params.runtime.apiKey,
@@ -1300,7 +1173,7 @@ export async function runAssistantWithTools(params: {
           },
           hostedSearchProbeId,
         ),
-        signal: streamAbortSignal.signal,
+        signal: options?.signal,
         sessionId: options?.sessionId ?? params.sessionId,
         cacheRetention:
           options?.cacheRetention ??
@@ -1362,12 +1235,36 @@ export async function runAssistantWithTools(params: {
       );
 
       const sourceStream = streamSimpleByApi(streamModel, effectiveContext, streamOptions);
-      return wrapStreamWithToolPreflight(
-        sourceStream,
-        options?.signal,
-        () => earlyPreflightAbortController.abort(),
-        streamAbortSignal.cleanup,
-      );
+      return wrapStreamWithToolCallArgumentGuard(sourceStream, (toolCall, reason) => {
+        incompleteToolCallArguments.set(toolCall.id, reason);
+      });
+    };
+
+    // A truncated call whose repaired arguments also fail schema validation
+    // never reaches beforeToolCall (pi-agent-core validates first), so the
+    // model would see a schema error blaming its own call. Rewrite such tool
+    // results into the truthful transport-error teaching before the next turn.
+    const reconcileTruncatedToolResults = () => {
+      if (incompleteToolCallArguments.size === 0) return;
+      const messages = getAgentMessages(agent);
+      let changed = false;
+      const next = messages.map((message) => {
+        if (message.role !== "toolResult" || !message.isError) return message;
+        const reason = incompleteToolCallArguments.get(message.toolCallId);
+        if (!reason) return message;
+        incompleteToolCallArguments.delete(message.toolCallId);
+        refusedTruncatedToolCallIds.add(message.toolCallId);
+        changed = true;
+        return {
+          ...message,
+          content: [
+            { type: "text" as const, text: buildTruncatedToolCallText(message.toolName, reason) },
+          ],
+        };
+      });
+      if (changed && agent) {
+        agent.state.messages = next;
+      }
     };
 
     agent = new Agent({
@@ -1389,6 +1286,15 @@ export async function runAssistantWithTools(params: {
         const effectiveAssistantMessage =
           normalizeAssistantToolCallNamesForExecution(assistantMessage);
         toolCallsById.set(effectiveToolCall.id, effectiveToolCall);
+        const truncationReason = incompleteToolCallArguments.get(effectiveToolCall.id);
+        if (truncationReason) {
+          refusedTruncatedToolCallIds.add(effectiveToolCall.id);
+          incompleteToolCallArguments.delete(effectiveToolCall.id);
+          return {
+            block: true,
+            reason: buildTruncatedToolCallText(effectiveToolCall.name, truncationReason),
+          };
+        }
         if (effectiveToolCall.name !== "Agent") {
           return undefined;
         }
@@ -1398,7 +1304,16 @@ export async function runAssistantWithTools(params: {
           effectiveToolCall.name,
         );
         if (!rawGroup || rawGroup.length <= 1) return undefined;
-        const group = rawGroup.map(normalizeToolCallNameForExecution);
+        // A member with truncated arguments must not ride into execution on a
+        // sibling's batch — it is refused individually by the guard above.
+        const group = rawGroup
+          .map(normalizeToolCallNameForExecution)
+          .filter(
+            (call) =>
+              !incompleteToolCallArguments.has(call.id) &&
+              !refusedTruncatedToolCallIds.has(call.id),
+          );
+        if (group.length <= 1) return undefined;
 
         const batchKey = buildParallelToolBatchKey(group);
         if (!parallelToolBatches.has(batchKey)) {
@@ -1420,6 +1335,7 @@ export async function runAssistantWithTools(params: {
         if (override) {
           applyTurnContextOverride(override);
         }
+        reconcileTruncatedToolResults();
         return getAgentMessages(agent).slice();
       },
     });

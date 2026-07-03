@@ -231,7 +231,7 @@ test("agent tool rules steer new files to concrete Write paths", () => {
   ]);
   assert.match(suffix, /New files: call Write with a file path that includes the filename and the full content/);
   assert.match(suffix, /parent directories are created automatically/);
-  assert.match(suffix, /Do not set `mode`/);
+  assert.match(suffix, /Write and Edit check the file's current on-disk state automatically/);
   assert.match(suffix, /path must include the intended filename, not just a directory/);
   assert.match(suffix, /write \/ create files via heredocs, `tee`, `touch`, `cp`, or `mkdir`/);
 });

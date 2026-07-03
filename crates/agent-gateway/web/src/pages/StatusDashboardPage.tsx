@@ -33,7 +33,7 @@ import {
   getGatewayWebSocketClient,
   resetGatewayWebSocketClient,
   type GatewayWebSocketClientLike,
-  type TunnelSummary,
+  type TunnelStateSnapshot,
 } from "@/lib/gatewaySocket";
 import type {
   AgentStatus,
@@ -591,7 +591,7 @@ export function StatusDashboardPage() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryList | null>(null);
   const [workdirs, setWorkdirs] = useState<HistoryWorkdirSummary[]>([]);
-  const [tunnels, setTunnels] = useState<TunnelSummary[]>([]);
+  const [tunnelState, setTunnelState] = useState<TunnelStateSnapshot | null>(null);
   const [terminals, setTerminals] = useState<TerminalSession[]>([]);
   const [providers, setProviders] = useState<GatewayProviderSummary[]>([]);
   const [settingsSnapshot, setSettingsSnapshot] = useState<GatewaySettingsSyncPayload | null>(null);
@@ -654,12 +654,18 @@ export function StatusDashboardPage() {
     const unsubscribeSettings = api.subscribeSettings((payload) => {
       setSettingsSnapshot(payload);
     });
+    const unsubscribeTunnelState = api.subscribeTunnelState((snapshot) => {
+      setTunnelState((current) =>
+        current && snapshot.revision <= current.revision ? current : snapshot,
+      );
+    });
 
     return () => {
       unsubscribeStatus();
       unsubscribeHistory();
       unsubscribeTerminal();
       unsubscribeSettings();
+      unsubscribeTunnelState();
     };
   }, [api]);
 
@@ -674,7 +680,6 @@ export function StatusDashboardPage() {
         statusResult,
         historyResult,
         workdirsResult,
-        tunnelsResult,
         terminalsResult,
         providersResult,
         settingsResult,
@@ -682,7 +687,6 @@ export function StatusDashboardPage() {
         runSnapshotRequest(currentApi.getStatus()),
         runSnapshotRequest(currentApi.listHistory(1, HISTORY_PAGE_SIZE)),
         runSnapshotRequest(currentApi.listHistoryWorkdirs()),
-        runSnapshotRequest(currentApi.listTunnels()),
         runSnapshotRequest(currentApi.listTerminals()),
         runSnapshotRequest(currentApi.listProviders()),
         runSnapshotRequest(currentApi.getSettings()),
@@ -706,11 +710,6 @@ export function StatusDashboardPage() {
         setWorkdirs(workdirsResult.value.workdirs);
       } else {
         errors.push(asErrorMessage(workdirsResult.error, "项目活动读取失败"));
-      }
-      if (tunnelsResult.ok) {
-        setTunnels(tunnelsResult.value);
-      } else {
-        errors.push(asErrorMessage(tunnelsResult.error, "公网通道读取失败"));
       }
       if (terminalsResult.ok) {
         setTerminals(terminalsResult.value);
@@ -743,8 +742,9 @@ export function StatusDashboardPage() {
   }, [api, refreshVersion]);
 
   const runningConversations = useMemo(() => buildRunningConversations(history), [history]);
+  const tunnels = useMemo(() => tunnelState?.tunnels ?? [], [tunnelState]);
   const activeTunnels = useMemo(
-    () => tunnels.filter((item) => item.status === "active" && (!item.expiresAt || item.expiresAt > now)),
+    () => tunnels.filter((item) => !item.expiresAt || item.expiresAt > now / 1000),
     [now, tunnels],
   );
   const runningTerminals = useMemo(() => terminals.filter((item) => item.running), [terminals]);
@@ -1298,7 +1298,7 @@ export function StatusDashboardPage() {
         <footer className="status-board-footer">
           <span>
             <CheckCircle2 size={14} />
-            Sources: status.get / settings.get / history.list / terminal.list / tunnel.list / providers.list
+            Sources: status.get / settings.get / history.list / terminal.list / tunnel.state / providers.list
           </span>
           <span>
             <Timer size={14} />

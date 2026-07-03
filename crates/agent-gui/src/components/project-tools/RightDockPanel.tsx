@@ -56,7 +56,7 @@ type RightDockPanelProps = {
   tunnelClient?: LocalTunnelClient | null;
   tunnelEnabled?: boolean;
   tunnelDisabledMessage?: string;
-  tunnelRefreshToken?: number;
+  tunnelPublicBaseUrl: string;
   onWidthChange: (width: number) => void;
   onProjectStateChange: (
     updater: (current: RightDockProjectState) => RightDockProjectState,
@@ -326,7 +326,7 @@ export function RightDockPanel(props: RightDockPanelProps) {
     tunnelClient,
     tunnelEnabled = true,
     tunnelDisabledMessage,
-    tunnelRefreshToken,
+    tunnelPublicBaseUrl,
     onWidthChange,
     onProjectStateChange,
     onFileTreeStateChange,
@@ -642,7 +642,7 @@ export function RightDockPanel(props: RightDockPanelProps) {
                 tunnelClient={tunnelClient}
                 tunnelEnabled={tunnelEnabled}
                 tunnelDisabledMessage={tunnelDisabledMessage}
-                tunnelRefreshToken={tunnelRefreshToken}
+                tunnelPublicBaseUrl={tunnelPublicBaseUrl}
                 sshHosts={sshHosts}
                 associatedSshHostIds={associatedSshHostIds}
                 client={client}

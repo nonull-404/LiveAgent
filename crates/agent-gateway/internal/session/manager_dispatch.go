@@ -79,10 +79,19 @@ func (m *Manager) dispatchFromAgent(expected *AgentSession, env *gatewayv1.Agent
 		return
 	}
 
-	if tunnelControl := env.GetTunnelControl(); tunnelControl != nil {
-		m.handleAgentTunnelControl(session, env.GetRequestId(), tunnelControl)
+	// Desired-state and probe payloads fan out broadcasts and relay probes;
+	// run them off the gRPC read loop so tunnel frames keep flowing.
+	if tunnelDesired := env.GetTunnelDesired(); tunnelDesired != nil {
+		go m.ApplyDesiredState(tunnelDesired)
 		return
 	}
 
+	if tunnelProbeReport := env.GetTunnelProbeReport(); tunnelProbeReport != nil {
+		go m.ApplyProbeReport(tunnelProbeReport)
+		return
+	}
+
+	// TunnelMutationResult intentionally falls through to session.dispatch:
+	// it answers a gateway-issued request and correlates by request id.
 	session.dispatch(env)
 }

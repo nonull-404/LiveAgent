@@ -40,7 +40,7 @@ type RightDockContentProps = {
   tunnelClient?: LocalTunnelClient | null;
   tunnelEnabled: boolean;
   tunnelDisabledMessage?: string;
-  tunnelRefreshToken?: number;
+  tunnelPublicBaseUrl: string;
   sshHosts: SshHostConfig[];
   associatedSshHostIds: string[];
   client: TerminalClient;
@@ -87,7 +87,7 @@ export function RightDockContent(props: RightDockContentProps) {
     tunnelClient,
     tunnelEnabled,
     tunnelDisabledMessage,
-    tunnelRefreshToken,
+    tunnelPublicBaseUrl,
     sshHosts,
     associatedSshHostIds,
     client,
@@ -172,7 +172,7 @@ export function RightDockContent(props: RightDockContentProps) {
             enabled={tunnelEnabled}
             disabledMessage={tunnelDisabledMessage}
             projectPathKey={projectPathKey}
-            refreshToken={tunnelRefreshToken}
+            publicBaseUrl={tunnelPublicBaseUrl}
           />
         </div>
       ) : null}

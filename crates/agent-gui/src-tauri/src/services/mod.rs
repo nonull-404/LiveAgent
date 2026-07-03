@@ -5,3 +5,4 @@ pub mod memory;
 pub mod power_activity;
 pub mod proxy;
 pub mod skills;
+pub mod tunnel;

@@ -5,8 +5,10 @@ use serde_json::Value;
 use crate::commands::settings::{load_remote_settings, open_db, parse_remote_settings_payload};
 use crate::services::gateway::{
     GatewayChatClaimedRequest, GatewayChatQueueEventInput, GatewayChatQueueResponseInput,
-    GatewayChatRuntimeSnapshot, GatewayController, GatewayStatusSnapshot, GatewayTunnelCreateInput,
-    GatewayTunnelSummary, GatewayTunnelUpdateInput,
+    GatewayChatRuntimeSnapshot, GatewayController, GatewayStatusSnapshot,
+};
+use crate::services::tunnel::{
+    GatewayTunnelCreateInput, GatewayTunnelUpdateInput, TunnelStatePayload,
 };
 
 #[tauri::command]
@@ -211,17 +213,17 @@ pub async fn gateway_publish_settings_sync(
 }
 
 #[tauri::command]
-pub async fn gateway_tunnel_list(
+pub fn gateway_tunnel_state(
     gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<Vec<GatewayTunnelSummary>, String> {
-    gateway_controller.tunnel_list().await
+) -> Result<TunnelStatePayload, String> {
+    Ok(gateway_controller.tunnel_state())
 }
 
 #[tauri::command]
 pub async fn gateway_tunnel_create(
     input: GatewayTunnelCreateInput,
     gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<GatewayTunnelSummary, String> {
+) -> Result<(), String> {
     gateway_controller.tunnel_create(input).await
 }
 
@@ -229,22 +231,22 @@ pub async fn gateway_tunnel_create(
 pub async fn gateway_tunnel_update(
     input: GatewayTunnelUpdateInput,
     gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<GatewayTunnelSummary, String> {
+) -> Result<(), String> {
     gateway_controller.tunnel_update(input).await
-}
-
-#[tauri::command(rename_all = "snake_case")]
-pub async fn gateway_tunnel_probe(
-    tunnel_id: String,
-    gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<GatewayTunnelSummary, String> {
-    gateway_controller.tunnel_probe(tunnel_id).await
 }
 
 #[tauri::command(rename_all = "snake_case")]
 pub async fn gateway_tunnel_close(
     tunnel_id: String,
     gateway_controller: tauri::State<'_, Arc<GatewayController>>,
-) -> Result<GatewayTunnelSummary, String> {
+) -> Result<(), String> {
     gateway_controller.tunnel_close(tunnel_id).await
+}
+
+#[tauri::command(rename_all = "snake_case")]
+pub async fn gateway_tunnel_check(
+    tunnel_id: Option<String>,
+    gateway_controller: tauri::State<'_, Arc<GatewayController>>,
+) -> Result<(), String> {
+    gateway_controller.tunnel_check(tunnel_id).await
 }

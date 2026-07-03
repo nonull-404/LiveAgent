@@ -116,6 +116,11 @@ pub(crate) fn initialize_schema(conn: &Connection) -> Result<(), String> {
             payload_json TEXT NOT NULL,
             updated_at INTEGER NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS tunnel_settings (
+            tunnel_id TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
         CREATE INDEX IF NOT EXISTS idx_cron_execution_logs_task_started_at
             ON cron_execution_logs (task_id, started_at DESC);
         ",

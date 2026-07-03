@@ -75,6 +75,7 @@ func (m *Manager) ClearSession(session *AgentSession) {
 
 	session.Close()
 	m.clearTerminalSessionSnapshot()
+	go m.onAgentSessionCleared()
 }
 
 func (m *Manager) ClearSessionIfHeartbeatStale(session *AgentSession, timeout time.Duration) bool {
@@ -98,6 +99,7 @@ func (m *Manager) ClearSessionIfHeartbeatStale(session *AgentSession, timeout ti
 
 	session.Close()
 	m.clearTerminalSessionSnapshot()
+	go m.onAgentSessionCleared()
 	return true
 }
 
@@ -114,6 +116,7 @@ func (m *Manager) clearSessionForEpoch(sessionEpoch uint64) bool {
 
 	session.Close()
 	m.clearTerminalSessionSnapshot()
+	go m.onAgentSessionCleared()
 	return true
 }
 

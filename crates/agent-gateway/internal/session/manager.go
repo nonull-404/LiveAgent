@@ -12,7 +12,6 @@ var ErrAgentOffline = errors.New("agent offline")
 var ErrTunnelNotFound = errors.New("tunnel not found")
 var ErrTunnelExpired = errors.New("tunnel expired")
 var ErrTunnelOverLimit = errors.New("tunnel connection limit exceeded")
-var ErrTunnelLimitExceeded = errors.New("tunnel limit exceeded")
 var ErrCommandQueueFull = errors.New("command queue full")
 var ErrCommandQueueTimeout = errors.New("command queue timeout: agent did not reconnect")
 
@@ -32,7 +31,7 @@ type Manager struct {
 	registry    *sessionRegistry
 	syncHub     *syncHub
 	convStreams *conversationStreamStore
-	tunnels     *tunnelStore
+	tunnels     *tunnelRuntime
 	cmdQueue    *commandQueue
 }
 
@@ -79,10 +78,11 @@ func NewManager() *Manager {
 	m := &Manager{
 		registry: newSessionRegistry(),
 		syncHub:  newSyncHub(),
-		tunnels:  newTunnelStore(),
+		tunnels:  newTunnelRuntime(),
 		cmdQueue: newCommandQueue(defaultCommandQueueTimeout),
 	}
 	m.convStreams = newConversationStreamStore(m.IsOnline)
+	go m.tunnelExpirySweepLoop()
 	return m
 }
 

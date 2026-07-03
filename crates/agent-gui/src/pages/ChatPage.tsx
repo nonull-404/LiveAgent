@@ -26,12 +26,6 @@ import { type NotifyItem, NotifyToast } from "../components/chat/NotifyToast";
 import { SharedHistoryManagerModal } from "../components/chat/SharedHistoryManagerModal";
 import { Ban, PanelRightClose, PanelRightOpen, Terminal, Upload } from "../components/icons";
 import { MacOsTitleBarSpacer, MacOsTitleBarToggle } from "../components/MacOsTitleBarSpacer";
-import type {
-  LocalTunnelClient,
-  TunnelCreateInput,
-  TunnelSummary,
-  TunnelUpdateInput,
-} from "../components/project-tools/LocalTunnelPanel";
 import { RightDockPanel } from "../components/project-tools/RightDockPanel";
 import { Button } from "../components/ui/button";
 import { useConfirmDialog } from "../components/ui/confirm-dialog";
@@ -168,6 +162,12 @@ import {
 import { tauriTerminalClient } from "../lib/terminal/tauriTerminalClient";
 import type { TerminalSession } from "../lib/terminal/types";
 import type { SkillAccessPolicy } from "../lib/tools/skillAccessPolicy";
+import type {
+  LocalTunnelClient,
+  TunnelCreateInput,
+  TunnelStateSnapshot,
+  TunnelUpdateInput,
+} from "../lib/tunnels/constants";
 import {
   applyWorkspaceProjectConversationActivityMap,
   buildWorkspaceProjectActivityUpdatedAts,
@@ -709,7 +709,6 @@ export function ChatPage(props: ChatPageProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
   const [rightDockOpen, setRightDockOpen] = useState(false);
-  const [tunnelRefreshToken, setTunnelRefreshToken] = useState(0);
   const previousRightDockFileTreeOpenRef = useRef(false);
   const [workspaceEditorMounted, setWorkspaceEditorMounted] = useState(false);
   const [workspaceEditorOpen, setWorkspaceEditorOpen] = useState(false);
@@ -732,19 +731,52 @@ export function ChatPage(props: ChatPageProps) {
   const [remoteRuntimeStatus, setRemoteRuntimeStatus] = useState<GatewayRuntimeStatus>(() =>
     buildFallbackGatewayStatus(settings.remote),
   );
-  const tauriTunnelClient = useMemo<LocalTunnelClient>(
-    () => ({
-      listTunnels: () => invoke<TunnelSummary[]>("gateway_tunnel_list"),
-      createTunnel: (input: TunnelCreateInput) =>
-        invoke<TunnelSummary>("gateway_tunnel_create", { input }),
-      updateTunnel: (input: TunnelUpdateInput) =>
-        invoke<TunnelSummary>("gateway_tunnel_update", { input }),
-      probeTunnel: (id: string) =>
-        invoke<TunnelSummary>("gateway_tunnel_probe", { tunnel_id: id }),
-      closeTunnel: (id: string) => invoke<TunnelSummary>("gateway_tunnel_close", { tunnel_id: id }),
-    }),
-    [],
-  );
+  const tauriTunnelClient = useMemo<LocalTunnelClient>(() => {
+    const listeners = new Set<(snapshot: TunnelStateSnapshot) => void>();
+    let unlistenPromise: Promise<() => void> | null = null;
+    const normalizeSnapshot = (payload: unknown): TunnelStateSnapshot => {
+      const raw = (payload ?? {}) as Partial<TunnelStateSnapshot>;
+      return {
+        revision: raw.revision ?? 0,
+        agentOnline: raw.agentOnline === true,
+        relay: raw.relay ?? null,
+        tunnels: raw.tunnels ?? [],
+        gatewayUnsupported: raw.gatewayUnsupported === true,
+      };
+    };
+    return {
+      subscribeTunnelState: (listener) => {
+        listeners.add(listener);
+        if (!unlistenPromise) {
+          unlistenPromise = listen<TunnelStateSnapshot>("gateway:tunnel-state", (event) => {
+            const snapshot = normalizeSnapshot(event.payload);
+            for (const subscriber of [...listeners]) {
+              subscriber(snapshot);
+            }
+          });
+        }
+        void invoke<TunnelStateSnapshot>("gateway_tunnel_state")
+          .then((payload) => {
+            if (listeners.has(listener)) {
+              listener(normalizeSnapshot(payload));
+            }
+          })
+          .catch(() => {});
+        return () => {
+          listeners.delete(listener);
+          if (listeners.size === 0 && unlistenPromise) {
+            const pending = unlistenPromise;
+            unlistenPromise = null;
+            void pending.then((unlisten) => unlisten()).catch(() => {});
+          }
+        };
+      },
+      createTunnel: (input: TunnelCreateInput) => invoke<void>("gateway_tunnel_create", { input }),
+      updateTunnel: (input: TunnelUpdateInput) => invoke<void>("gateway_tunnel_update", { input }),
+      closeTunnel: (id: string) => invoke<void>("gateway_tunnel_close", { tunnel_id: id }),
+      checkTunnel: (id?: string) => invoke<void>("gateway_tunnel_check", { tunnel_id: id }),
+    };
+  }, []);
 
   const {
     historyItems,
@@ -1538,12 +1570,10 @@ export function ChatPage(props: ChatPageProps) {
     : !terminalProjectPath
       ? "Select a project to use project tools."
       : undefined;
-  const tunnelEnabled = settings.remote.enableWebTunnels === true && remoteRuntimeStatus.online;
+  const tunnelEnabled = settings.remote.enableWebTunnels === true;
   const tunnelDisabledMessage = !settings.remote.enableWebTunnels
     ? t("projectTools.tunnelWebDisabled")
-    : !remoteRuntimeStatus.online
-      ? t("projectTools.tunnelRemoteOffline")
-      : undefined;
+    : undefined;
   const hideWorkspaceSshTerminalOverlay = useCallback(() => {
     setWorkspaceSshTerminalOpen(false);
   }, []);
@@ -4717,7 +4747,7 @@ export function ChatPage(props: ChatPageProps) {
             enabledMcpServerIds,
             selectableMcpServers,
             remoteWebTunnelsEnabled: settings.remote.enableWebTunnels,
-            remoteGatewayOnline: canShareHistory,
+            tunnelPublicBaseUrl: settings.remote.gatewayUrl.trim(),
             sshHosts: settings.ssh.hosts,
             associatedSshHostIds: effectiveAssociatedSshHostIds,
             sshManagerRemoteAllowed:
@@ -4728,9 +4758,8 @@ export function ChatPage(props: ChatPageProps) {
               }
             },
             onTunnelsChanged: (change) => {
-              setTunnelRefreshToken((current) => current + 1);
               if (change.action === "create") {
-                ensureTunnelToolTab(change.tunnel.projectPathKey);
+                ensureTunnelToolTab(change.projectPathKey);
               }
             },
             sessionId,
@@ -5827,7 +5856,7 @@ export function ChatPage(props: ChatPageProps) {
         tunnelClient={isAgentMode ? tauriTunnelClient : null}
         tunnelEnabled={tunnelEnabled}
         tunnelDisabledMessage={tunnelDisabledMessage}
-        tunnelRefreshToken={tunnelRefreshToken}
+        tunnelPublicBaseUrl={settings.remote.gatewayUrl.trim()}
         onWidthChange={(nextWidth) => setSettings((prev) => updateRightDockWidth(prev, nextWidth))}
         onProjectStateChange={(updater) =>
           setSettings((prev) => updateRightDockProjectState(prev, terminalProjectPathKey, updater))

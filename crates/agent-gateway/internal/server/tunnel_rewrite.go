@@ -1,6 +1,8 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime"
@@ -12,8 +14,6 @@ import (
 	"github.com/tdewolff/parse/v2"
 	"github.com/tdewolff/parse/v2/css"
 	"golang.org/x/net/html"
-
-	gatewayv1 "github.com/liveagent/agent-gateway/internal/proto/v1"
 )
 
 const tunnelRewriteBodyMaxBytes = 4 * 1024 * 1024
@@ -65,10 +65,10 @@ func tunnelResponseRewriteKindFor(
 
 func rewriteTunnelResponseBody(
 	body []byte,
-	tunnel *gatewayv1.TunnelSummary,
+	rw tunnelRewrite,
 	kind tunnelResponseRewriteKind,
 ) ([]byte, bool) {
-	if len(body) == 0 || kind == tunnelResponseRewriteNone || tunnelPublicPathPrefix(tunnel) == "" {
+	if len(body) == 0 || kind == tunnelResponseRewriteNone || rw.publicPrefix() == "" {
 		return body, false
 	}
 	if !utf8.Valid(body) {
@@ -79,9 +79,9 @@ func rewriteTunnelResponseBody(
 	rewritten := original
 	switch kind {
 	case tunnelResponseRewriteHTML:
-		rewritten = rewriteTunnelHTMLBody(rewritten, tunnel)
+		rewritten = rewriteTunnelHTMLBody(rewritten, rw)
 	case tunnelResponseRewriteCSS:
-		rewritten = rewriteTunnelCSSBody(rewritten, tunnel)
+		rewritten = rewriteTunnelCSSBody(rewritten, rw)
 	}
 	if rewritten == original {
 		return body, false
@@ -89,12 +89,12 @@ func rewriteTunnelResponseBody(
 	return []byte(rewritten), true
 }
 
-func rewriteTunnelHTMLBody(input string, tunnel *gatewayv1.TunnelSummary) string {
+func rewriteTunnelHTMLBody(input string, rw tunnelRewrite) string {
 	tokenizer := html.NewTokenizer(strings.NewReader(input))
 	var builder strings.Builder
 	changed := false
 	injected := false
-	shim := tunnelRuntimeBootstrapScript(tunnel)
+	shim := tunnelRuntimeBootstrapScript(rw)
 
 	for {
 		tokenType := tokenizer.Next()
@@ -124,13 +124,13 @@ func rewriteTunnelHTMLBody(input string, tunnel *gatewayv1.TunnelSummary) string
 			key := strings.ToLower(strings.TrimSpace(attr.Key))
 			switch {
 			case isTunnelHTMLURLAttribute(key):
-				rewritten := rewriteTunnelBodyURL(attr.Val, tunnel)
+				rewritten := rewriteTunnelBodyURL(attr.Val, rw)
 				if rewritten != attr.Val {
 					attr.Val = rewritten
 					tokenChanged = true
 				}
 			case key == "style":
-				rewritten := rewriteTunnelCSSBody(attr.Val, tunnel)
+				rewritten := rewriteTunnelCSSBody(attr.Val, rw)
 				if rewritten != attr.Val {
 					attr.Val = rewritten
 					tokenChanged = true
@@ -159,7 +159,7 @@ func rewriteTunnelHTMLBody(input string, tunnel *gatewayv1.TunnelSummary) string
 	return builder.String()
 }
 
-func rewriteTunnelCSSBody(input string, tunnel *gatewayv1.TunnelSummary) string {
+func rewriteTunnelCSSBody(input string, rw tunnelRewrite) string {
 	lexer := css.NewLexer(parse.NewInputString(input))
 	var builder strings.Builder
 	changed := false
@@ -175,7 +175,7 @@ func rewriteTunnelCSSBody(input string, tunnel *gatewayv1.TunnelSummary) string 
 
 		token := string(data)
 		if tokenType == css.URLToken {
-			if rewritten, ok := rewriteTunnelCSSURLToken(token, tunnel); ok {
+			if rewritten, ok := rewriteTunnelCSSURLToken(token, rw); ok {
 				builder.WriteString(rewritten)
 				changed = true
 				continue
@@ -199,8 +199,18 @@ func isTunnelHTMLURLAttribute(key string) bool {
 	}
 }
 
-func tunnelRuntimeBootstrapScript(tunnel *gatewayv1.TunnelSummary) string {
-	prefix := tunnelPublicPathPrefix(tunnel)
+func tunnelRuntimeBootstrapScript(rw tunnelRewrite) string {
+	body := tunnelShimScriptBody(rw)
+	if body == "" {
+		return ""
+	}
+	return `<script data-liveagent-tunnel-shim>` + body + `</script>`
+}
+
+// tunnelShimScriptBody is the raw JS between the shim's script tags; CSP
+// hash amendment must digest exactly this string.
+func tunnelShimScriptBody(rw tunnelRewrite) string {
+	prefix := rw.publicPrefix()
 	if prefix == "" {
 		return ""
 	}
@@ -210,7 +220,7 @@ func tunnelRuntimeBootstrapScript(tunnel *gatewayv1.TunnelSummary) string {
 	if err != nil {
 		return ""
 	}
-	return `<script data-liveagent-tunnel-shim>(function(config){` +
+	return `(function(config){` +
 		`if(window.__LIVEAGENT_TUNNEL__&&window.__LIVEAGENT_TUNNEL__.installed)return;` +
 		`var base=String(config.basePath||"").replace(/\/+$/,"");` +
 		`window.__LIVEAGENT_TUNNEL__={basePath:base,installed:true};` +
@@ -223,10 +233,10 @@ func tunnelRuntimeBootstrapScript(tunnel *gatewayv1.TunnelSummary) string {
 		`if(window.EventSource){var NativeEventSource=window.EventSource;window.EventSource=function(url,options){return new NativeEventSource(rw(url),options)};window.EventSource.prototype=NativeEventSource.prototype}` +
 		`if(window.fetch){var nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){if(input instanceof Request)return nativeFetch(new Request(rw(input.url),input),init);return nativeFetch(rw(input),init)}}` +
 		`if(window.XMLHttpRequest){var open=window.XMLHttpRequest.prototype.open;window.XMLHttpRequest.prototype.open=function(method,url){arguments[1]=rw(url);return open.apply(this,arguments)}}` +
-		`})(` + string(config) + `);</script>`
+		`})(` + string(config) + `);`
 }
 
-func rewriteTunnelCSSURLToken(token string, tunnel *gatewayv1.TunnelSummary) (string, bool) {
+func rewriteTunnelCSSURLToken(token string, rw tunnelRewrite) (string, bool) {
 	openIndex := strings.Index(token, "(")
 	closeIndex := strings.LastIndex(token, ")")
 	if openIndex < 0 || closeIndex < openIndex {
@@ -254,7 +264,7 @@ func rewriteTunnelCSSURLToken(token string, tunnel *gatewayv1.TunnelSummary) (st
 		value = value[1 : len(value)-1]
 	}
 
-	rewritten := rewriteTunnelBodyURL(value, tunnel)
+	rewritten := rewriteTunnelBodyURL(value, rw)
 	if rewritten == value {
 		return token, false
 	}
@@ -267,8 +277,8 @@ func rewriteTunnelCSSURLToken(token string, tunnel *gatewayv1.TunnelSummary) (st
 	return before + leading + rewritten + trailing + after, true
 }
 
-func rewriteTunnelBodyURL(value string, tunnel *gatewayv1.TunnelSummary) string {
-	prefix := tunnelPublicPathPrefix(tunnel)
+func rewriteTunnelBodyURL(value string, rw tunnelRewrite) string {
+	prefix := rw.publicPrefix()
 	if prefix == "" {
 		return value
 	}
@@ -283,7 +293,7 @@ func rewriteTunnelBodyURL(value string, tunnel *gatewayv1.TunnelSummary) string 
 	if err != nil {
 		return value
 	}
-	target, targetErr := url.Parse(tunnel.GetTargetUrl())
+	target, targetErr := rw.parseTarget()
 	if parsed.IsAbs() {
 		if targetErr != nil || target.Host == "" {
 			return value
@@ -309,15 +319,88 @@ func rewriteTunnelBodyURL(value string, tunnel *gatewayv1.TunnelSummary) string 
 	return appendTunnelURLQueryAndFragment(prefix+pathOrRoot(path), parsed)
 }
 
-func tunnelPublicPathPrefix(tunnel *gatewayv1.TunnelSummary) string {
-	if tunnel == nil {
-		return ""
-	}
-	slug := strings.TrimSpace(tunnel.GetSlug())
+// tunnelRewrite carries the two facts body/header rewriting needs: which
+// public prefix the tunnel is mounted under and which local target it fronts.
+type tunnelRewrite struct {
+	slug      string
+	targetURL string
+}
+
+func (rw tunnelRewrite) publicPrefix() string {
+	slug := strings.TrimSpace(rw.slug)
 	if slug == "" {
 		return ""
 	}
 	return "/t/" + slug
+}
+
+func (rw tunnelRewrite) parseTarget() (*url.URL, error) {
+	return url.Parse(strings.TrimSpace(rw.targetURL))
+}
+
+// amendTunnelCSP makes the injected shim executable under the response's
+// Content-Security-Policy. Hash-amendable policies get the shim's sha256;
+// nonce/strict-dynamic policies cannot be amended without weakening them, so
+// they are stripped with an explicit marker header instead.
+func amendTunnelCSP(headers http.Header, shimScriptBody string) {
+	policies := headers.Values("Content-Security-Policy")
+	if len(policies) == 0 || strings.TrimSpace(shimScriptBody) == "" {
+		return
+	}
+	digest := sha256.Sum256([]byte(shimScriptBody))
+	hash := "'sha256-" + base64.StdEncoding.EncodeToString(digest[:]) + "'"
+
+	amended := make([]string, 0, len(policies))
+	for _, policy := range policies {
+		lower := strings.ToLower(policy)
+		if strings.Contains(lower, "'nonce-") || strings.Contains(lower, "'strict-dynamic'") {
+			headers.Del("Content-Security-Policy")
+			headers.Del("Content-Security-Policy-Report-Only")
+			headers.Set("X-Liveagent-Tunnel-Csp", "stripped")
+			return
+		}
+		amended = append(amended, amendTunnelCSPPolicy(policy, hash))
+	}
+	headers.Del("Content-Security-Policy")
+	for _, policy := range amended {
+		headers.Add("Content-Security-Policy", policy)
+	}
+}
+
+func amendTunnelCSPPolicy(policy string, hash string) string {
+	directives := strings.Split(policy, ";")
+	scriptIndexes := make([]int, 0, 2)
+	defaultIndex := -1
+	for index, directive := range directives {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 {
+			continue
+		}
+		name := strings.ToLower(fields[0])
+		switch name {
+		case "script-src", "script-src-elem":
+			scriptIndexes = append(scriptIndexes, index)
+		case "default-src":
+			defaultIndex = index
+		}
+	}
+	targets := scriptIndexes
+	if len(targets) == 0 {
+		if defaultIndex < 0 {
+			return policy // no script restriction to satisfy
+		}
+		targets = []int{defaultIndex}
+	}
+	for _, index := range targets {
+		lower := strings.ToLower(directives[index])
+		// A hash would re-disable 'unsafe-inline' on policies that rely on it.
+		if strings.Contains(lower, "'unsafe-inline'") &&
+			!strings.Contains(lower, "'sha") && !strings.Contains(lower, "'nonce-") {
+			continue
+		}
+		directives[index] = strings.TrimRight(directives[index], " ") + " " + hash
+	}
+	return strings.Join(directives, ";")
 }
 
 func pathOrRoot(path string) string {

@@ -38,7 +38,7 @@ import { createSkillTools } from "./skillTools";
 import { createSSHManagerTools, type SshManagerSessionChange } from "./sshManagerTools";
 import type { SystemToolId, SystemToolRuntimeScope } from "./systemToolOptions";
 import { createTerminalTools } from "./terminalTools";
-import { createTunnelManagerTools } from "./tunnelManagerTools";
+import { createTunnelManagerTools, type TunnelManagerChange } from "./tunnelManagerTools";
 
 export type BuiltinToolRegistry = {
   tools: BuiltinToolBundle["tools"];
@@ -223,34 +223,13 @@ type BuildBuiltinBaseToolRegistryParams = {
   mcpLoadFailureMode?: "continue" | "throw";
   memoryToolMode?: "rw" | "ro";
   remoteWebTunnelsEnabled?: boolean;
-  remoteGatewayOnline?: boolean;
   tunnelProjectPathKey?: string;
+  tunnelPublicBaseUrl?: string;
   sshHosts?: SshHostConfig[];
   associatedSshHostIds?: string[];
   sshManagerRemoteAllowed?: boolean;
   onSshSessionsChanged?: (change: SshManagerSessionChange) => void | Promise<void>;
-  onTunnelsChanged?: (change: {
-    action: "create" | "probe" | "close";
-    tunnel: {
-      id: string;
-      slug: string;
-      name: string;
-      targetUrl: string;
-      publicUrl: string;
-      createdAt: number;
-      expiresAt: number;
-      status: "active" | "expired" | "offline";
-      projectPathKey?: string;
-      diagnostics?: Array<{
-        protocol: "http" | "websocket" | "sse";
-        status: "ok" | "failed" | "unknown";
-        statusCode: number;
-        errorCode: string;
-        message: string;
-        checkedAt: number;
-      }>;
-    };
-  }) => void | Promise<void>;
+  onTunnelsChanged?: (change: TunnelManagerChange) => void | Promise<void>;
 };
 
 async function buildBaseBuiltinToolBundles(params: BuildBuiltinBaseToolRegistryParams) {
@@ -305,12 +284,10 @@ async function buildBaseBuiltinToolBundles(params: BuildBuiltinBaseToolRegistryP
       mode: params.memoryToolMode ?? "rw",
     }),
     createTunnelManagerTools({
-      enabled:
-        params.remoteWebTunnelsEnabled === true &&
-        params.remoteGatewayOnline === true &&
-        params.runtimeScope === "chat",
+      enabled: params.remoteWebTunnelsEnabled === true && params.runtimeScope === "chat",
       runtimeScope: params.runtimeScope,
       projectPathKey: params.tunnelProjectPathKey,
+      publicBaseUrl: params.tunnelPublicBaseUrl,
       onTunnelsChanged: params.onTunnelsChanged,
     }),
     createSSHManagerTools({

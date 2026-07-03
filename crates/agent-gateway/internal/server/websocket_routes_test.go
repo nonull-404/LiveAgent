@@ -1,7 +1,6 @@
 package server
 
 import (
-	"encoding/json"
 	"testing"
 )
 
@@ -61,11 +60,10 @@ func TestWebsocketRequestHandlersCoverKnownProtocolTypes(t *testing.T) {
 		"sftp.delete",
 		"sftp.transfer",
 		"sftp.cancel",
-		"tunnel.list",
 		"tunnel.create",
 		"tunnel.update",
 		"tunnel.close",
-		"tunnel.probe",
+		"tunnel.check",
 		"git.status",
 		"git.branches",
 		"git.init",
@@ -143,52 +141,5 @@ func TestDecodeWebSocketPayloadRejectsUnknownFields(t *testing.T) {
 	}
 	if err := decodeWebSocketPayload([]byte(`{"known":"ok","unknown":true}`), &payload); err == nil {
 		t.Fatal("expected unknown payload field to be rejected")
-	}
-}
-
-func TestTunnelTTLFromPayloadDefaultsOnlyWhenOmitted(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name       string
-		raw        json.RawMessage
-		camelValue uint32
-		snakeValue uint32
-		want       uint32
-	}{
-		{
-			name:       "omitted",
-			raw:        json.RawMessage(`{"targetUrl":"http://localhost:3000"}`),
-			camelValue: 0,
-			snakeValue: 0,
-			want:       websocketDefaultTunnelTTLSeconds,
-		},
-		{
-			name:       "camel explicit infinite",
-			raw:        json.RawMessage(`{"targetUrl":"http://localhost:3000","ttlSeconds":0}`),
-			camelValue: 0,
-			snakeValue: 0,
-			want:       0,
-		},
-		{
-			name:       "snake explicit infinite",
-			raw:        json.RawMessage(`{"target_url":"http://localhost:3000","ttl_seconds":0}`),
-			camelValue: 0,
-			snakeValue: 0,
-			want:       0,
-		},
-		{
-			name:       "camel finite",
-			raw:        json.RawMessage(`{"targetUrl":"http://localhost:3000","ttlSeconds":900}`),
-			camelValue: 900,
-			snakeValue: 0,
-			want:       900,
-		},
-	}
-
-	for _, tt := range tests {
-		if got := tunnelTTLFromPayload(tt.raw, tt.camelValue, tt.snakeValue); got != tt.want {
-			t.Fatalf("%s: tunnelTTLFromPayload = %d, want %d", tt.name, got, tt.want)
-		}
 	}
 }

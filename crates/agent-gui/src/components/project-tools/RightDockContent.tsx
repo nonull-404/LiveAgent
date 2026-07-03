@@ -1,3 +1,4 @@
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { RefObject } from "react";
 import { useLocale } from "../../i18n";
 import type { GitClient } from "../../lib/git/types";
@@ -36,7 +37,7 @@ type RightDockContentProps = {
   tunnelClient?: LocalTunnelClient | null;
   tunnelEnabled: boolean;
   tunnelDisabledMessage?: string;
-  tunnelRefreshToken?: number;
+  tunnelPublicBaseUrl: string;
   sshHosts: SshHostConfig[];
   associatedSshHostIds: string[];
   client: TerminalClient;
@@ -83,7 +84,7 @@ export function RightDockContent(props: RightDockContentProps) {
     tunnelClient,
     tunnelEnabled,
     tunnelDisabledMessage,
-    tunnelRefreshToken,
+    tunnelPublicBaseUrl,
     sshHosts,
     associatedSshHostIds,
     client,
@@ -163,7 +164,10 @@ export function RightDockContent(props: RightDockContentProps) {
             enabled={tunnelEnabled}
             disabledMessage={tunnelDisabledMessage}
             projectPathKey={projectPathKey}
-            refreshToken={tunnelRefreshToken}
+            publicBaseUrl={tunnelPublicBaseUrl}
+            onOpenExternal={(url) => {
+              void openUrl(url);
+            }}
           />
         </div>
       ) : null}

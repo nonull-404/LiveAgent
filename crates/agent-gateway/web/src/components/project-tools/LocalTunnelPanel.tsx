@@ -1,12 +1,19 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useLocale } from "@/i18n";
-import { workspaceProjectPathKey } from "@/lib/settings";
-import { cn } from "@/lib/shared/utils";
-import type {
-  TunnelCreateInput,
-  TunnelSummary as GatewayTunnelSummary,
-  TunnelUpdateInput,
-} from "@/lib/gatewaySocket";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocale } from "../../i18n";
+import { workspaceProjectPathKey } from "../../lib/settings";
+import { cn } from "../../lib/shared/utils";
+import {
+  composePublicUrl,
+  type LocalTunnelClient,
+  TUNNEL_TTL_OPTIONS,
+  type TunnelCreateInput,
+  type TunnelHealth,
+  type TunnelStateSnapshot,
+  type TunnelStatus,
+  type TunnelTtlSeconds,
+  type TunnelUpdateInput,
+  validateLocalHttpTarget,
+} from "../../lib/tunnels/constants";
 import {
   AlertTriangle,
   Check,
@@ -28,31 +35,26 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 
-export type { TunnelCreateInput };
-export type TunnelSummary = Omit<GatewayTunnelSummary, "activeConnections">;
-type TunnelDiagnostic = NonNullable<TunnelSummary["diagnostics"]>[number];
-
-export type TunnelTtlSeconds = 0 | 900 | 3600 | 14400;
-
-export type LocalTunnelClient = {
-  listTunnels(): Promise<TunnelSummary[]>;
-  createTunnel(input: TunnelCreateInput): Promise<TunnelSummary>;
-  updateTunnel(input: TunnelUpdateInput): Promise<TunnelSummary>;
-  probeTunnel(id: string): Promise<TunnelSummary>;
-  closeTunnel(id: string): Promise<TunnelSummary>;
-};
+export type { LocalTunnelClient } from "../../lib/tunnels/constants";
 
 type LocalTunnelPanelProps = {
-  client: LocalTunnelClient;
-  enabled?: boolean;
+  client: LocalTunnelClient | null;
+  enabled: boolean;
   disabledMessage?: string;
   projectPathKey?: string;
-  refreshToken?: number;
+  publicBaseUrl: string;
+  onOpenExternal?: (url: string) => void;
 };
 
 type TunnelScope = "project" | "global";
 
-const TUNNEL_MANAGER_CHANGED_EVENT = "liveagent:tunnel-manager-changed";
+type TunnelRowAction = "save" | "close" | "check";
+
+type HealthDisplayStatus = TunnelHealth["status"];
+
+// "keep" leaves ttl_seconds out of tunnel.update so the current expiry is
+// preserved instead of silently re-bucketing it.
+type EditTtlValue = TunnelTtlSeconds | "keep";
 
 const TUNNEL_SCOPE_OPTIONS: Array<{
   scope: TunnelScope;
@@ -71,49 +73,43 @@ const TUNNEL_SCOPE_OPTIONS: Array<{
   },
 ];
 
-const TTL_OPTIONS: Array<{ value: TunnelTtlSeconds; labelKey: string }> = [
-  { value: 900, labelKey: "projectTools.tunnelTtl15m" },
-  { value: 3600, labelKey: "projectTools.tunnelTtl1h" },
-  { value: 14400, labelKey: "projectTools.tunnelTtl4h" },
-  { value: 0, labelKey: "projectTools.tunnelTtlInfinite" },
-];
-
-const TUNNEL_DIAGNOSTIC_PROTOCOLS: TunnelDiagnostic["protocol"][] = [
-  "http",
-  "websocket",
-  "sse",
-];
-
 const TUNNEL_INPUT_CLASS =
   "h-8 min-w-0 rounded-lg border-border/60 bg-background/80 text-[11px] placeholder:text-[11px] transition-[border-color,box-shadow,background-color] focus-visible:border-muted-foreground/30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-muted-foreground/15 focus-visible:ring-offset-0";
+
+function ttlLabelKey(value: TunnelTtlSeconds) {
+  if (value === 900) return "projectTools.tunnelTtl15m";
+  if (value === 3600) return "projectTools.tunnelTtl1h";
+  if (value === 14400) return "projectTools.tunnelTtl4h";
+  return "projectTools.tunnelTtlInfinite";
+}
 
 function TtlSegmented({
   value,
   onChange,
   disabled,
 }: {
-  value: TunnelTtlSeconds;
+  value: TunnelTtlSeconds | null;
   onChange: (value: TunnelTtlSeconds) => void;
   disabled?: boolean;
 }) {
   const { t } = useLocale();
   return (
     <div className="grid min-w-0 grid-cols-4 gap-0.5 rounded-lg bg-muted/70 p-0.5">
-      {TTL_OPTIONS.map((option) => {
-        const active = value === option.value;
+      {TUNNEL_TTL_OPTIONS.map((option) => {
+        const active = value === option;
         return (
           <button
-            key={option.value}
+            key={option}
             type="button"
             aria-pressed={active}
-            onClick={() => onChange(option.value)}
+            onClick={() => onChange(option)}
             disabled={disabled}
             className={cn(
               "h-7 min-w-0 truncate rounded-[7px] px-1 text-xs text-muted-foreground transition-all duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
               active && "bg-background font-medium text-foreground shadow-sm",
             )}
           >
-            {t(option.labelKey)}
+            {t(ttlLabelKey(option))}
           </button>
         );
       })}
@@ -121,44 +117,46 @@ function TtlSegmented({
   );
 }
 
-function normalizeTunnelHostname(hostname: string) {
-  return hostname.toLowerCase().replace(/^\[/, "").replace(/\]$/, "");
+function healthStatusLabelKey(status: HealthDisplayStatus) {
+  if (status === "ok") return "projectTools.tunnelHealthOk";
+  if (status === "failed") return "projectTools.tunnelHealthFailed";
+  return "projectTools.tunnelHealthUnknown";
 }
 
-function isIpv4Address(hostname: string) {
-  const parts = hostname.split(".");
-  if (parts.length !== 4) return false;
-  return parts.every((part) => {
-    if (!/^\d+$/.test(part)) return false;
-    const value = Number(part);
-    return value >= 0 && value <= 255 && String(value) === part;
-  });
-}
-
-function isIpAddress(hostname: string) {
-  if (isIpv4Address(hostname)) return true;
-  return hostname.includes(":");
-}
-
-function validateLocalHttpTarget(input: string) {
-  const value = input.trim();
-  if (!value) return "projectTools.tunnelTargetRequired";
-  try {
-    const url = new URL(value);
-    if (url.protocol !== "http:") {
-      return "projectTools.tunnelInvalidUrl";
-    }
-    const hostname = normalizeTunnelHostname(url.hostname);
-    if (hostname !== "localhost" && !isIpAddress(hostname)) {
-      return "projectTools.tunnelLocalhostOnly";
-    }
-    if (url.username || url.password || url.hash) {
-      return "projectTools.tunnelInvalidUrl";
-    }
-  } catch {
-    return "projectTools.tunnelInvalidUrl";
-  }
-  return null;
+function HealthBadge({
+  label,
+  status,
+  title,
+}: {
+  label: string;
+  status: HealthDisplayStatus;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex min-w-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
+        status === "ok"
+          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+          : status === "failed"
+            ? "border-destructive/20 bg-destructive/10 text-destructive"
+            : "border-border/60 bg-muted/50 text-muted-foreground",
+      )}
+    >
+      <span
+        className={cn(
+          "h-1.5 w-1.5 shrink-0 rounded-full",
+          status === "ok"
+            ? "bg-emerald-500"
+            : status === "failed"
+              ? "bg-destructive"
+              : "bg-muted-foreground/45",
+        )}
+      />
+      <span className="truncate">{label}</span>
+    </span>
+  );
 }
 
 function asErrorMessage(error: unknown) {
@@ -205,43 +203,21 @@ function fallbackWriteTextToClipboard(text: string) {
   }
 }
 
-function displayTunnelName(tunnel: TunnelSummary) {
+function displayTunnelName(tunnel: TunnelStatus) {
   return tunnel.name.trim() || tunnel.targetUrl;
-}
-
-function tunnelStatusKey(status: TunnelSummary["status"]) {
-  if (status === "expired") return "projectTools.tunnelStatusExpired";
-  if (status === "offline") return "projectTools.tunnelStatusOffline";
-  return "projectTools.tunnelStatusActive";
 }
 
 function normalizeProjectPathKey(value: string | undefined) {
   return workspaceProjectPathKey(value ?? "");
 }
 
-function ttlFromTunnel(tunnel: TunnelSummary, nowSeconds: number): TunnelTtlSeconds {
-  if (!tunnel.expiresAt) return 0;
-  const remaining = Math.max(0, tunnel.expiresAt - nowSeconds);
-  if (remaining <= 900) return 900;
-  if (remaining <= 3600) return 3600;
-  return 14400;
-}
-
-function diagnosticFor(tunnel: TunnelSummary, protocol: TunnelDiagnostic["protocol"]) {
-  return tunnel.diagnostics?.find((item) => item.protocol === protocol);
-}
-
-function diagnosticLabel(protocol: TunnelDiagnostic["protocol"]) {
-  if (protocol === "websocket") return "WS";
-  return protocol.toUpperCase();
-}
-
 export function LocalTunnelPanel({
   client,
-  enabled = true,
+  enabled,
   disabledMessage,
   projectPathKey,
-  refreshToken,
+  publicBaseUrl,
+  onOpenExternal,
 }: LocalTunnelPanelProps) {
   const { t } = useLocale();
   const normalizedProjectPathKey = useMemo(
@@ -255,78 +231,52 @@ export function LocalTunnelPanel({
   const [name, setName] = useState("");
   const [ttlSeconds, setTtlSeconds] = useState<TunnelTtlSeconds>(3600);
   const [createOpen, setCreateOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState("");
   const [editTargetUrl, setEditTargetUrl] = useState("");
   const [editName, setEditName] = useState("");
-  const [editTtlSeconds, setEditTtlSeconds] = useState<TunnelTtlSeconds>(3600);
-  const [tunnels, setTunnels] = useState<TunnelSummary[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [creating, setCreating] = useState(false);
-  const [savingId, setSavingId] = useState("");
-  const [closingId, setClosingId] = useState("");
-  const [probingId, setProbingId] = useState("");
+  const [editTtlSeconds, setEditTtlSeconds] = useState<EditTtlValue>("keep");
+  const [snapshot, setSnapshot] = useState<TunnelStateSnapshot | null>(null);
+  const [pendingActions, setPendingActions] = useState<Record<string, TunnelRowAction>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
+  const [checkingAll, setCheckingAll] = useState(false);
   const [copiedId, setCopiedId] = useState("");
-  const [error, setError] = useState<string | null>(null);
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000));
-  const refreshTokenRef = useRef(refreshToken);
   const targetValidationKey = useMemo(() => validateLocalHttpTarget(targetUrl), [targetUrl]);
   const editTargetValidationKey = useMemo(
     () => (editingId ? validateLocalHttpTarget(editTargetUrl) : null),
     [editTargetUrl, editingId],
   );
 
-  const refresh = useCallback(
-    (options?: { showLoading?: boolean }) => {
-      const showLoading = options?.showLoading ?? true;
-      if (showLoading) {
-        setLoading(true);
-      }
-      setError(null);
-      return client
-        .listTunnels()
-        .then((items) => setTunnels(items))
-        .catch((err) => setError(asErrorMessage(err)))
-        .finally(() => {
-          if (showLoading) {
-            setLoading(false);
-          }
-        });
-    },
-    [client],
-  );
-
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  useEffect(() => {
-    if (refreshTokenRef.current === refreshToken) return;
-    refreshTokenRef.current = refreshToken;
-    void refresh({ showLoading: false });
-  }, [refresh, refreshToken]);
-
-  useEffect(() => {
-    const handleTunnelManagerChanged = () => {
-      void refresh({ showLoading: false });
-    };
-    window.addEventListener(TUNNEL_MANAGER_CHANGED_EVENT, handleTunnelManagerChanged);
-    return () =>
-      window.removeEventListener(TUNNEL_MANAGER_CHANGED_EVENT, handleTunnelManagerChanged);
-  }, [refresh]);
+    if (!client) return;
+    return client.subscribeTunnelState((next) => {
+      setSnapshot((current) => (current && next.revision <= current.revision ? current : next));
+    });
+  }, [client]);
 
   useEffect(() => {
     if (!normalizedProjectPathKey && scope === "project") {
       setScope("global");
-      setError(null);
+      setCreateError(null);
     }
   }, [normalizedProjectPathKey, scope]);
 
+  const tunnels = useMemo(() => snapshot?.tunnels ?? [], [snapshot]);
+  const hasFiniteExpiry = useMemo(
+    () => tunnels.some((tunnel) => tunnel.expiresAt > 0),
+    [tunnels],
+  );
+
   useEffect(() => {
+    if (!hasFiniteExpiry) return;
+    setNowSeconds(Math.floor(Date.now() / 1000));
     const timer = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [hasFiniteExpiry]);
 
   useEffect(() => {
     if (!copiedId) return;
@@ -334,13 +284,37 @@ export function LocalTunnelPanel({
     return () => window.clearTimeout(timer);
   }, [copiedId]);
 
+  const gatewayUnsupported = snapshot?.gatewayUnsupported === true;
+  const mutationsEnabled = enabled && !gatewayUnsupported && Boolean(client);
+
+  const beginRowAction = useCallback((id: string, action: TunnelRowAction) => {
+    setPendingActions((current) => ({ ...current, [id]: action }));
+    setRowErrors((current) => {
+      if (!(id in current)) return current;
+      const { [id]: _removed, ...rest } = current;
+      return rest;
+    });
+  }, []);
+
+  const endRowAction = useCallback((id: string) => {
+    setPendingActions((current) => {
+      if (!(id in current)) return current;
+      const { [id]: _removed, ...rest } = current;
+      return rest;
+    });
+  }, []);
+
+  const setRowError = useCallback((id: string, message: string) => {
+    setRowErrors((current) => ({ ...current, [id]: message }));
+  }, []);
+
   const createTunnel = useCallback(() => {
     const validationKey = validateLocalHttpTarget(targetUrl);
     if (validationKey) {
-      setError(t(validationKey));
+      setCreateError(t(validationKey));
       return;
     }
-    if (!enabled || creating) return;
+    if (!client || !mutationsEnabled || creating) return;
     const input: TunnelCreateInput = {
       targetUrl: targetUrl.trim(),
       name: name.trim() || undefined,
@@ -350,134 +324,168 @@ export function LocalTunnelPanel({
       input.projectPathKey = normalizedProjectPathKey;
     }
     setCreating(true);
-    setError(null);
+    setCreateError(null);
     void client
       .createTunnel(input)
-      .then((created) => {
-        setTunnels((current) => [
-          created,
-          ...current.filter((item) => item.id !== created.id && item.slug !== created.slug),
-        ]);
-        setName("");
-        void refresh({ showLoading: false });
-      })
-      .catch((err) => setError(asErrorMessage(err)))
+      .then(() => setName(""))
+      .catch((err) => setCreateError(asErrorMessage(err)))
       .finally(() => setCreating(false));
   }, [
     client,
     creating,
-    enabled,
+    mutationsEnabled,
     name,
     normalizedProjectPathKey,
-    refresh,
     scope,
     t,
     targetUrl,
     ttlSeconds,
   ]);
 
-  const beginEdit = useCallback(
-    (tunnel: TunnelSummary) => {
-      setEditingId(tunnel.id);
-      setEditTargetUrl(tunnel.targetUrl);
-      setEditName(tunnel.name);
-      setEditTtlSeconds(ttlFromTunnel(tunnel, nowSeconds));
-      setError(null);
-    },
-    [nowSeconds],
-  );
+  const beginEdit = useCallback((tunnel: TunnelStatus) => {
+    setEditingId(tunnel.id);
+    setEditTargetUrl(tunnel.targetUrl);
+    setEditName(tunnel.name);
+    setEditTtlSeconds("keep");
+    setRowErrors((current) => {
+      if (!(tunnel.id in current)) return current;
+      const { [tunnel.id]: _removed, ...rest } = current;
+      return rest;
+    });
+  }, []);
 
   const cancelEdit = useCallback(() => {
     setEditingId("");
     setEditTargetUrl("");
     setEditName("");
-    setEditTtlSeconds(3600);
-    setError(null);
+    setEditTtlSeconds("keep");
   }, []);
 
   const updateTunnel = useCallback(
-    (tunnel: TunnelSummary) => {
+    (tunnel: TunnelStatus) => {
       const validationKey = validateLocalHttpTarget(editTargetUrl);
       if (validationKey) {
-        setError(t(validationKey));
+        setRowError(tunnel.id, t(validationKey));
         return;
       }
-      if (!enabled || savingId) return;
+      if (!client || !mutationsEnabled || pendingActions[tunnel.id]) return;
       const input: TunnelUpdateInput = {
         id: tunnel.id,
         targetUrl: editTargetUrl.trim(),
         name: editName.trim() || undefined,
-        ttlSeconds: editTtlSeconds,
       };
+      // Only re-bucket the expiry when the user explicitly picked a TTL.
+      if (editTtlSeconds !== "keep") {
+        input.ttlSeconds = editTtlSeconds;
+      }
       const tunnelProjectPathKey = normalizeProjectPathKey(tunnel.projectPathKey);
       if (tunnelProjectPathKey) {
         input.projectPathKey = tunnelProjectPathKey;
       }
-      setSavingId(tunnel.id);
-      setError(null);
+      beginRowAction(tunnel.id, "save");
       void client
         .updateTunnel(input)
-        .then((updated) => {
-          setTunnels((current) => current.map((item) => (item.id === updated.id ? updated : item)));
-          cancelEdit();
-        })
-        .catch((err) => setError(asErrorMessage(err)))
-        .finally(() => setSavingId((current) => (current === tunnel.id ? "" : current)));
+        .then(() => cancelEdit())
+        .catch((err) => setRowError(tunnel.id, asErrorMessage(err)))
+        .finally(() => endRowAction(tunnel.id));
     },
-    [cancelEdit, client, editName, editTargetUrl, editTtlSeconds, enabled, savingId, t],
+    [
+      beginRowAction,
+      cancelEdit,
+      client,
+      editName,
+      editTargetUrl,
+      editTtlSeconds,
+      endRowAction,
+      mutationsEnabled,
+      pendingActions,
+      setRowError,
+      t,
+    ],
   );
 
   const closeTunnel = useCallback(
     (id: string) => {
-      if (!enabled || closingId) return;
-      setClosingId(id);
-      setError(null);
+      if (!client || !mutationsEnabled || pendingActions[id]) return;
+      beginRowAction(id, "close");
       void client
         .closeTunnel(id)
-        .then((closed) => {
-          setTunnels((current) =>
-            current
-              .filter((item) => item.id !== id)
-              .concat(closed.status === "active" ? [closed] : []),
-          );
-        })
-        .catch((err) => setError(asErrorMessage(err)))
-        .finally(() => setClosingId((current) => (current === id ? "" : current)));
+        .catch((err) => setRowError(id, asErrorMessage(err)))
+        .finally(() => endRowAction(id));
     },
-    [client, closingId, enabled],
+    [beginRowAction, client, endRowAction, mutationsEnabled, pendingActions, setRowError],
   );
 
-  const probeTunnel = useCallback(
+  const checkTunnel = useCallback(
     (id: string) => {
-      if (!enabled || probingId) return;
-      setProbingId(id);
-      setError(null);
+      if (!client || !mutationsEnabled || pendingActions[id]) return;
+      beginRowAction(id, "check");
       void client
-        .probeTunnel(id)
-        .then((updated) =>
-          setTunnels((current) => current.map((item) => (item.id === updated.id ? updated : item))),
-        )
-        .catch((err) => setError(asErrorMessage(err)))
-        .finally(() => setProbingId((current) => (current === id ? "" : current)));
+        .checkTunnel(id)
+        .catch((err) => setRowError(id, asErrorMessage(err)))
+        .finally(() => endRowAction(id));
     },
-    [client, enabled, probingId],
+    [beginRowAction, client, endRowAction, mutationsEnabled, pendingActions, setRowError],
   );
 
-  const copyLink = useCallback((tunnel: TunnelSummary) => {
-    if (!tunnel.publicUrl) return;
-    void writeTextToClipboard(tunnel.publicUrl)
-      .then((copied) => {
-        if (copied) {
-          setCopiedId(tunnel.id);
-        }
-      })
-      .catch(() => {});
-  }, []);
+  const checkAllTunnels = useCallback(() => {
+    if (!client || !mutationsEnabled || checkingAll) return;
+    setCheckingAll(true);
+    setCreateError(null);
+    void client
+      .checkTunnel()
+      .catch((err) => setCreateError(asErrorMessage(err)))
+      .finally(() => setCheckingAll(false));
+  }, [checkingAll, client, mutationsEnabled]);
 
-  const openLink = useCallback((tunnel: TunnelSummary) => {
-    if (!tunnel.publicUrl) return;
-    window.open(tunnel.publicUrl, "_blank", "noopener,noreferrer");
-  }, []);
+  const publicUrlFor = useCallback(
+    (tunnel: TunnelStatus) => composePublicUrl(publicBaseUrl, tunnel.publicPath),
+    [publicBaseUrl],
+  );
+
+  const copyLink = useCallback(
+    (tunnel: TunnelStatus) => {
+      const url = publicUrlFor(tunnel);
+      if (!url) return;
+      void writeTextToClipboard(url)
+        .then((copied) => {
+          if (copied) {
+            setCopiedId(tunnel.id);
+          }
+        })
+        .catch(() => {});
+    },
+    [publicUrlFor],
+  );
+
+  const openLink = useCallback(
+    (tunnel: TunnelStatus) => {
+      const url = publicUrlFor(tunnel);
+      if (!url) return;
+      if (onOpenExternal) {
+        onOpenExternal(url);
+        return;
+      }
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [onOpenExternal, publicUrlFor],
+  );
+
+  const healthTitle = useCallback(
+    (health: TunnelHealth | null) => {
+      if (!health) return t("projectTools.tunnelHealthUnknown");
+      return [
+        t(healthStatusLabelKey(health.status)),
+        health.httpStatus > 0 ? `HTTP ${health.httpStatus}` : "",
+        health.rttMs > 0 ? `${health.rttMs}ms` : "",
+        health.error,
+        health.checkedAt > 0 ? formatDateTime(health.checkedAt) : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    },
+    [t],
+  );
 
   const scopedTunnels = useMemo(
     () =>
@@ -496,13 +504,17 @@ export function LocalTunnelPanel({
     () => [...scopedTunnels].sort((a, b) => b.createdAt - a.createdAt),
     [scopedTunnels],
   );
+  const loading = Boolean(client) && snapshot === null;
+  const agentOnline = snapshot?.agentOnline === true;
+  const linkStatus: HealthDisplayStatus = snapshot ? (agentOnline ? "ok" : "failed") : "unknown";
+  const relayStatus: HealthDisplayStatus = snapshot?.relay?.status ?? "unknown";
   const canCreate =
-    enabled &&
+    mutationsEnabled &&
     !creating &&
     !targetValidationKey &&
     (scope !== "project" || Boolean(normalizedProjectPathKey));
   const showCreateForm = scope === "project" && Boolean(normalizedProjectPathKey);
-  const createFieldsDisabled = !showCreateForm || !createOpen || !enabled || creating;
+  const createFieldsDisabled = !showCreateForm || !createOpen || !mutationsEnabled || creating;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-gradient-to-b from-muted/40 via-muted/15 to-background">
@@ -519,6 +531,35 @@ export function LocalTunnelPanel({
               {t("projectTools.tunnelDescription")}
             </div>
           </div>
+        </div>
+        <div className="mt-2.5 flex min-w-0 items-center gap-1.5">
+          <HealthBadge
+            label={t("projectTools.tunnelLinkLabel")}
+            status={linkStatus}
+            title={`${t("projectTools.tunnelLinkLabel")} · ${t(healthStatusLabelKey(linkStatus))}`}
+          />
+          <HealthBadge
+            label={t("projectTools.tunnelRelayLabel")}
+            status={relayStatus}
+            title={`${t("projectTools.tunnelRelayLabel")} · ${healthTitle(snapshot?.relay ?? null)}`}
+          />
+          <span className="min-w-0 flex-1" />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 shrink-0 gap-1 rounded-lg px-2 text-[11px] text-muted-foreground hover:text-foreground"
+            disabled={!mutationsEnabled || checkingAll}
+            onClick={checkAllTunnels}
+            title={!enabled ? disabledMessage : t("projectTools.tunnelCheckAction")}
+          >
+            {checkingAll ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3 w-3" />
+            )}
+            {t("projectTools.tunnelCheckAction")}
+          </Button>
         </div>
         <div
           role="group"
@@ -545,7 +586,7 @@ export function LocalTunnelPanel({
                 disabled={disabled}
                 onClick={() => {
                   setScope(option.scope);
-                  setError(null);
+                  setCreateError(null);
                 }}
                 className={cn(
                   "relative z-10 flex h-7 min-w-0 transform-gpu items-center justify-center gap-1.5 rounded-[7px] px-2 text-xs text-muted-foreground transition-[color,transform] duration-200 ease-out hover:text-foreground active:scale-[0.98] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-40 motion-reduce:transition-none motion-reduce:active:scale-100",
@@ -565,6 +606,13 @@ export function LocalTunnelPanel({
           <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-700 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span className="min-w-0">{disabledMessage}</span>
+          </div>
+        ) : null}
+
+        {gatewayUnsupported ? (
+          <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-700 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0">{t("projectTools.tunnelGatewayUnsupported")}</span>
           </div>
         ) : null}
 
@@ -693,9 +741,9 @@ export function LocalTunnelPanel({
           </div>
         ) : null}
 
-        {error ? (
+        {createError ? (
           <div className="mb-3 rounded-xl border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs leading-relaxed text-destructive">
-            {error}
+            {createError}
           </div>
         ) : null}
 
@@ -739,9 +787,15 @@ export function LocalTunnelPanel({
               {sortedTunnels.map((tunnel) => {
                 const hasExpiry = tunnel.expiresAt > 0;
                 const remaining = hasExpiry ? tunnel.expiresAt - nowSeconds : 0;
-                const expired = tunnel.status === "expired" || (hasExpiry && remaining <= 0);
+                const expired = hasExpiry && remaining <= 0;
+                const offline = snapshot !== null && !agentOnline;
                 const isEditing = editingId === tunnel.id;
-                const updating = savingId === tunnel.id;
+                const pendingAction = pendingActions[tunnel.id];
+                const updating = pendingAction === "save";
+                const rowError = rowErrors[tunnel.id];
+                const publicUrl = publicUrlFor(tunnel);
+                const localHealth = tunnel.local;
+                const localStatus: HealthDisplayStatus = localHealth?.status ?? "unknown";
                 const tunnelProjectPathKey = normalizeProjectPathKey(tunnel.projectPathKey);
                 const handleEditKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
                   if (event.nativeEvent.isComposing) return;
@@ -765,7 +819,7 @@ export function LocalTunnelPanel({
                       <span
                         className={cn(
                           "inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium",
-                          tunnel.status === "offline"
+                          offline
                             ? "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                             : expired
                               ? "border-border/60 bg-muted/70 text-muted-foreground"
@@ -775,14 +829,20 @@ export function LocalTunnelPanel({
                         <span
                           className={cn(
                             "h-1.5 w-1.5 rounded-full",
-                            tunnel.status === "offline"
+                            offline
                               ? "bg-amber-500"
                               : expired
                                 ? "bg-muted-foreground/50"
                                 : "animate-pulse bg-emerald-500 motion-reduce:animate-none",
                           )}
                         />
-                        {t(tunnelStatusKey(expired ? "expired" : tunnel.status))}
+                        {t(
+                          offline
+                            ? "projectTools.tunnelStatusOffline"
+                            : expired
+                              ? "projectTools.tunnelStatusExpired"
+                              : "projectTools.tunnelStatusActive",
+                        )}
                       </span>
                     </div>
 
@@ -801,7 +861,7 @@ export function LocalTunnelPanel({
                               value={editTargetUrl}
                               onChange={(event) => setEditTargetUrl(event.target.value)}
                               onKeyDown={handleEditKeyDown}
-                              disabled={!enabled || updating}
+                              disabled={!mutationsEnabled || updating}
                               inputMode="url"
                               autoComplete="off"
                               spellCheck={false}
@@ -827,7 +887,7 @@ export function LocalTunnelPanel({
                               onChange={(event) => setEditName(event.target.value)}
                               onKeyDown={handleEditKeyDown}
                               placeholder={t("projectTools.tunnelNamePlaceholder")}
-                              disabled={!enabled || updating}
+                              disabled={!mutationsEnabled || updating}
                               autoComplete="off"
                               className={TUNNEL_INPUT_CLASS}
                             />
@@ -836,10 +896,23 @@ export function LocalTunnelPanel({
                             <Label className="text-xs text-muted-foreground">
                               {t("projectTools.tunnelTtl")}
                             </Label>
+                            <button
+                              type="button"
+                              aria-pressed={editTtlSeconds === "keep"}
+                              onClick={() => setEditTtlSeconds("keep")}
+                              disabled={!mutationsEnabled || updating}
+                              className={cn(
+                                "flex h-7 min-w-0 items-center justify-center truncate rounded-lg bg-muted/70 px-2 text-xs text-muted-foreground transition-all duration-200 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50",
+                                editTtlSeconds === "keep" &&
+                                  "bg-background font-medium text-foreground shadow-sm ring-1 ring-border/60",
+                              )}
+                            >
+                              {t("projectTools.tunnelKeepCurrentTtl")}
+                            </button>
                             <TtlSegmented
-                              value={editTtlSeconds}
+                              value={editTtlSeconds === "keep" ? null : editTtlSeconds}
                               onChange={setEditTtlSeconds}
-                              disabled={!enabled || updating}
+                              disabled={!mutationsEnabled || updating}
                             />
                           </div>
                         </div>
@@ -860,7 +933,7 @@ export function LocalTunnelPanel({
                             type="button"
                             size="sm"
                             className="h-7 gap-1 rounded-lg px-2.5 text-xs"
-                            disabled={!enabled || updating || Boolean(editTargetValidationKey)}
+                            disabled={!mutationsEnabled || updating || Boolean(editTargetValidationKey)}
                             onClick={() => updateTunnel(tunnel)}
                             title={
                               updating
@@ -882,7 +955,7 @@ export function LocalTunnelPanel({
                         <button
                           type="button"
                           onClick={() => copyLink(tunnel)}
-                          disabled={!tunnel.publicUrl}
+                          disabled={!publicUrl}
                           title={
                             copiedId === tunnel.id
                               ? t("projectTools.tunnelCopied")
@@ -897,7 +970,7 @@ export function LocalTunnelPanel({
                         >
                           <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                           <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground/85">
-                            {tunnel.publicUrl}
+                            {publicUrl}
                           </span>
                           {copiedId === tunnel.id ? (
                             <Check className="h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
@@ -913,55 +986,41 @@ export function LocalTunnelPanel({
                           <span className="shrink-0">{t("projectTools.tunnelTarget")}</span>
                           <span className="min-w-0 truncate font-mono">{tunnel.targetUrl}</span>
                         </div>
-                        <div className="mx-3 mt-2 grid grid-cols-3 gap-1">
-                          {TUNNEL_DIAGNOSTIC_PROTOCOLS.map((protocol) => {
-                            const diagnostic = diagnosticFor(tunnel, protocol);
-                            const status = diagnostic?.status ?? "unknown";
-                            const title = diagnostic
-                              ? [
-                                  diagnosticLabel(protocol),
-                                  t(
-                                    status === "ok"
-                                      ? "projectTools.tunnelDiagnosticOk"
-                                      : status === "failed"
-                                        ? "projectTools.tunnelDiagnosticFailed"
-                                        : "projectTools.tunnelDiagnosticUnknown",
-                                  ),
-                                  diagnostic.statusCode ? String(diagnostic.statusCode) : "",
-                                  diagnostic.errorCode,
-                                  diagnostic.message,
-                                ]
-                                  .filter(Boolean)
-                                  .join(" · ")
-                              : t("projectTools.tunnelDiagnosticUnknown");
-                            return (
-                              <div
-                                key={protocol}
-                                title={title}
-                                className={cn(
-                                  "flex h-6 min-w-0 items-center justify-center gap-1 rounded-md border px-1 text-[10px] font-medium",
-                                  status === "ok"
-                                    ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                    : status === "failed"
-                                      ? "border-destructive/20 bg-destructive/10 text-destructive"
-                                      : "border-border/60 bg-muted/50 text-muted-foreground",
-                                )}
-                              >
-                                <span
-                                  className={cn(
-                                    "h-1.5 w-1.5 rounded-full",
-                                    status === "ok"
-                                      ? "bg-emerald-500"
-                                      : status === "failed"
-                                        ? "bg-destructive"
-                                        : "bg-muted-foreground/45",
-                                  )}
-                                />
-                                <span className="truncate">{diagnosticLabel(protocol)}</span>
-                              </div>
-                            );
-                          })}
+                        <div className="mx-3 mt-2 flex min-w-0 items-center gap-1">
+                          <div
+                            title={`${t("projectTools.tunnelServiceLabel")} · ${healthTitle(localHealth)}`}
+                            className={cn(
+                              "flex h-6 min-w-0 items-center gap-1 rounded-md border px-1.5 text-[10px] font-medium",
+                              localStatus === "ok"
+                                ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                                : localStatus === "failed"
+                                  ? "border-destructive/20 bg-destructive/10 text-destructive"
+                                  : "border-border/60 bg-muted/50 text-muted-foreground",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "h-1.5 w-1.5 shrink-0 rounded-full",
+                                localStatus === "ok"
+                                  ? "bg-emerald-500"
+                                  : localStatus === "failed"
+                                    ? "bg-destructive"
+                                    : "bg-muted-foreground/45",
+                              )}
+                            />
+                            <span className="truncate">{t("projectTools.tunnelServiceLabel")}</span>
+                            {localStatus === "ok" && localHealth && localHealth.httpStatus > 0 ? (
+                              <span className="shrink-0 tabular-nums">HTTP {localHealth.httpStatus}</span>
+                            ) : (
+                              <span className="truncate">{t(healthStatusLabelKey(localStatus))}</span>
+                            )}
+                          </div>
                         </div>
+                        {rowError ? (
+                          <div className="mx-3 mt-2 rounded-lg border border-destructive/25 bg-destructive/10 px-2 py-1.5 text-[11px] leading-relaxed text-destructive">
+                            {rowError}
+                          </div>
+                        ) : null}
                         <div className="mt-2 flex items-center justify-between gap-2 border-t border-border/40 py-1 pl-3 pr-1.5">
                           <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
                             <span
@@ -996,12 +1055,12 @@ export function LocalTunnelPanel({
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
-                              disabled={!enabled || expired || probingId === tunnel.id}
-                              onClick={() => probeTunnel(tunnel.id)}
-                              title={!enabled ? disabledMessage : t("projectTools.tunnelProbe")}
-                              aria-label={t("projectTools.tunnelProbe")}
+                              disabled={!mutationsEnabled || expired || Boolean(pendingAction)}
+                              onClick={() => checkTunnel(tunnel.id)}
+                              title={!enabled ? disabledMessage : t("projectTools.tunnelCheckAction")}
+                              aria-label={t("projectTools.tunnelCheckAction")}
                             >
-                              {probingId === tunnel.id ? (
+                              {pendingAction === "check" ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : (
                                 <RefreshCw className="h-3.5 w-3.5" />
@@ -1012,7 +1071,7 @@ export function LocalTunnelPanel({
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
-                              disabled={!enabled || expired}
+                              disabled={!mutationsEnabled || expired}
                               onClick={() => beginEdit(tunnel)}
                               title={!enabled ? disabledMessage : t("projectTools.tunnelEdit")}
                               aria-label={t("projectTools.tunnelEdit")}
@@ -1024,7 +1083,7 @@ export function LocalTunnelPanel({
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
-                              disabled={!tunnel.publicUrl || expired}
+                              disabled={!publicUrl || expired}
                               onClick={() => openLink(tunnel)}
                               title={t("projectTools.tunnelOpenLink")}
                               aria-label={t("projectTools.tunnelOpenLink")}
@@ -1036,12 +1095,12 @@ export function LocalTunnelPanel({
                               variant="ghost"
                               size="icon"
                               className="h-7 w-7 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                              disabled={!enabled || closingId === tunnel.id}
+                              disabled={!mutationsEnabled || Boolean(pendingAction)}
                               onClick={() => closeTunnel(tunnel.id)}
                               title={!enabled ? disabledMessage : t("projectTools.tunnelClose")}
                               aria-label={t("projectTools.tunnelClose")}
                             >
-                              {closingId === tunnel.id ? (
+                              {pendingAction === "close" ? (
                                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                               ) : (
                                 <Trash2 className="h-3.5 w-3.5" />

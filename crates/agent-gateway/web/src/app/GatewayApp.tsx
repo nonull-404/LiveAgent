@@ -350,7 +350,6 @@ export default function GatewayApp() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [activeView, setActiveView] = useState<"chat" | "skills-hub" | "mcp-hub">("chat");
   const [rightDockOpen, setRightDockOpen] = useState(false);
-  const [tunnelRefreshToken, setTunnelRefreshToken] = useState(0);
   const { confirm: requestConfirmDialog, dialog: confirmDialog } = useConfirmDialog();
   const {
     scrollAreaRef: transcriptScrollAreaRef,
@@ -974,11 +973,12 @@ export default function GatewayApp() {
     [activeWorkspaceProjectPath, setSettings],
   );
 
+  // Tunnel list refreshes arrive through the tunnel.state push; the chat
+  // event only opens the tunnel tool tab when the agent creates a tunnel.
   const handleTunnelManagerChatEvent = useCallback(
     (event: ChatEvent) => {
       const change = readTunnelManagerToolChange(event);
       if (!change) return;
-      setTunnelRefreshToken((current) => current + 1);
       if (change.action === "create") {
         ensureTunnelToolTab(change.projectPathKey);
       }
@@ -3759,15 +3759,15 @@ export default function GatewayApp() {
   const gitDisabledMessage = !settings.remote.enableWebGit
     ? "WebUI Git is disabled in desktop Remote settings."
     : undefined;
-  const tunnelEnabled =
-    settingsSyncReady && settings.remote.enableWebTunnels === true && status?.online === true;
+  // Agent offline no longer disables the panel: state still renders (the
+  // Link badge shows offline) and mutations fail server-side with a clear
+  // message.
+  const tunnelEnabled = settingsSyncReady && settings.remote.enableWebTunnels === true;
   const tunnelDisabledMessage = !settingsSyncReady
     ? translate("chat.runtime.tunnelSettingsSyncing", settings.locale)
     : !settings.remote.enableWebTunnels
       ? translate("projectTools.tunnelWebDisabled", settings.locale)
-      : status?.online !== true
-        ? translate("projectTools.tunnelRemoteOffline", settings.locale)
-        : undefined;
+      : undefined;
   useEffect(() => {
     if (activeView !== "chat") {
       return;
@@ -4620,7 +4620,7 @@ export default function GatewayApp() {
             tunnelClient={isAgentMode ? api : null}
             tunnelEnabled={tunnelEnabled}
             tunnelDisabledMessage={tunnelDisabledMessage}
-            tunnelRefreshToken={tunnelRefreshToken}
+            tunnelPublicBaseUrl={window.location.origin}
             onWidthChange={(nextWidth) =>
               setSettings((prev) => updateRightDockWidth(prev, nextWidth))
             }

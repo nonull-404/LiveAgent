@@ -53,6 +53,13 @@ import type {
   HistoryWorkdirsResponse,
   MemoryManagePayload,
 } from "./gatewayTypes";
+import type {
+  TunnelCreateInput,
+  TunnelHealth,
+  TunnelStateSnapshot,
+  TunnelStatus,
+  TunnelUpdateInput,
+} from "@/lib/tunnels/constants";
 import { ConversationStreamClient } from "@/lib/chat/stream/conversationStreamClient";
 import type {
   ChatCommandAccepted,
@@ -202,79 +209,44 @@ export type UploadedImagePreviewResponse = {
   data: string;
 };
 
-export type TunnelCreateInput = {
-  targetUrl: string;
-  name?: string;
-  ttlSeconds: 0 | 900 | 3600 | 14400;
-  projectPathKey?: string;
+export type {
+  LocalTunnelClient,
+  TunnelCreateInput,
+  TunnelHealth,
+  TunnelStateSnapshot,
+  TunnelStatus,
+  TunnelTtlSeconds,
+  TunnelUpdateInput,
+} from "@/lib/tunnels/constants";
+
+type TunnelStateListener = (snapshot: TunnelStateSnapshot) => void;
+
+type RawTunnelHealth = {
+  status?: string;
+  http_status?: number;
+  error?: string;
+  checked_at?: number;
+  rtt_ms?: number;
 };
 
-export type TunnelUpdateInput = {
-  id: string;
-  targetUrl: string;
-  name?: string;
-  ttlSeconds: 0 | 900 | 3600 | 14400;
-  projectPathKey?: string;
-};
-
-export type TunnelSummary = {
-  id: string;
-  slug: string;
-  name: string;
-  targetUrl: string;
-  publicUrl: string;
-  createdAt: number;
-  expiresAt: number;
-  activeConnections: number;
-  status: "active" | "expired" | "offline";
-  projectPathKey: string;
-  diagnostics: TunnelDiagnostic[];
-};
-
-export type TunnelDiagnostic = {
-  protocol: "http" | "websocket" | "sse";
-  status: "ok" | "failed" | "unknown";
-  statusCode: number;
-  errorCode: string;
-  message: string;
-  checkedAt: number;
-};
-
-type RawTunnelSummary = {
+type RawTunnelStatus = {
   id?: string;
   slug?: string;
   name?: string;
-  targetUrl?: string;
   target_url?: string;
-  publicUrl?: string;
-  public_url?: string;
-  createdAt?: number;
+  public_path?: string;
   created_at?: number;
-  expiresAt?: number;
   expires_at?: number;
-  activeConnections?: number;
   active_connections?: number;
-  status?: string;
-  projectPathKey?: string;
   project_path_key?: string;
-  diagnostics?: RawTunnelDiagnostic[];
+  local?: RawTunnelHealth | null;
 };
 
-type RawTunnelDiagnostic = {
-  protocol?: string;
-  status?: string;
-  statusCode?: number;
-  status_code?: number;
-  errorCode?: string;
-  error_code?: string;
-  message?: string;
-  checkedAt?: number;
-  checked_at?: number;
-};
-
-type RawTunnelResponse = {
-  tunnel?: RawTunnelSummary;
-  tunnels?: RawTunnelSummary[];
+type RawTunnelStatePayload = {
+  revision?: number;
+  agent_online?: boolean;
+  relay?: RawTunnelHealth | null;
+  tunnels?: RawTunnelStatus[];
 };
 
 type HistoryGetOptions = {
@@ -1004,62 +976,45 @@ function replayTerminalSnapshot(
   }
 }
 
-function normalizeTunnelStatus(input: unknown): TunnelSummary["status"] {
-  return input === "expired" || input === "offline" ? input : "active";
+function normalizeTunnelHealthStatus(input: unknown): TunnelHealth["status"] {
+  return input === "ok" || input === "failed" ? input : "unknown";
 }
 
-function normalizeTunnelDiagnosticProtocol(input: unknown): TunnelDiagnostic["protocol"] {
-  if (input === "websocket" || input === "sse") return input;
-  return "http";
-}
-
-function normalizeTunnelDiagnosticStatus(input: unknown): TunnelDiagnostic["status"] {
-  if (input === "ok" || input === "failed") return input;
-  return "unknown";
-}
-
-function normalizeTunnelDiagnostic(input: RawTunnelDiagnostic): TunnelDiagnostic {
+function normalizeTunnelHealth(input: RawTunnelHealth | null | undefined): TunnelHealth | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
   return {
-    protocol: normalizeTunnelDiagnosticProtocol(input.protocol),
-    status: normalizeTunnelDiagnosticStatus(input.status),
-    statusCode: Number(input.statusCode ?? input.status_code ?? 0),
-    errorCode: (input.errorCode ?? input.error_code ?? "").trim(),
-    message: (input.message ?? "").trim(),
-    checkedAt: Number(input.checkedAt ?? input.checked_at ?? 0),
+    status: normalizeTunnelHealthStatus(input.status),
+    httpStatus: Number(input.http_status ?? 0),
+    error: (input.error ?? "").trim(),
+    checkedAt: Number(input.checked_at ?? 0),
+    rttMs: Number(input.rtt_ms ?? 0),
   };
 }
 
-function fallbackTunnelPublicUrl(slug: string) {
-  const origin = getRuntimeOrigin().replace(/\/$/, "");
-  return origin && slug ? `${origin}/t/${slug}/` : "";
-}
-
-function normalizeTunnelSummary(input: RawTunnelSummary): TunnelSummary {
-  const slug = input.slug?.trim() ?? "";
+function normalizeTunnelStatus(input: RawTunnelStatus): TunnelStatus {
   return {
     id: input.id?.trim() ?? "",
-    slug,
+    slug: input.slug?.trim() ?? "",
     name: input.name?.trim() ?? "",
-    targetUrl: input.targetUrl ?? input.target_url ?? "",
-    publicUrl: input.publicUrl ?? input.public_url ?? fallbackTunnelPublicUrl(slug),
-    createdAt: Number(input.createdAt ?? input.created_at ?? 0),
-    expiresAt: Number(input.expiresAt ?? input.expires_at ?? 0),
-    activeConnections: Number(input.activeConnections ?? input.active_connections ?? 0),
-    status: normalizeTunnelStatus(input.status),
-    projectPathKey: (input.projectPathKey ?? input.project_path_key ?? "").trim(),
-    diagnostics: (input.diagnostics ?? []).map(normalizeTunnelDiagnostic),
+    targetUrl: input.target_url ?? "",
+    publicPath: input.public_path ?? "",
+    createdAt: Number(input.created_at ?? 0),
+    expiresAt: Number(input.expires_at ?? 0),
+    activeConnections: Number(input.active_connections ?? 0),
+    projectPathKey: (input.project_path_key ?? "").trim(),
+    local: normalizeTunnelHealth(input.local),
   };
 }
 
-function normalizeTunnelListResponse(input: RawTunnelResponse): TunnelSummary[] {
-  return (input.tunnels ?? []).map(normalizeTunnelSummary);
-}
-
-function normalizeTunnelResponse(input: RawTunnelResponse): TunnelSummary {
-  if (!input.tunnel) {
-    throw new Error("Tunnel response did not include a tunnel");
-  }
-  return normalizeTunnelSummary(input.tunnel);
+function normalizeTunnelStateSnapshot(input: RawTunnelStatePayload): TunnelStateSnapshot {
+  return {
+    revision: Number(input.revision ?? 0),
+    agentOnline: input.agent_online === true,
+    relay: normalizeTunnelHealth(input.relay),
+    tunnels: (input.tunnels ?? []).map(normalizeTunnelStatus),
+  };
 }
 
 function normalizeOptionalOffset(value: unknown) {
@@ -1126,6 +1081,14 @@ export class GatewayWebSocketClient {
   private chatQueueListeners = new Set<ChatQueueListener>();
   private chatActivityListeners = new Set<ChatActivityListener>();
   private chatCommandUpdateListeners = new Set<ChatCommandUpdateListener>();
+  private tunnelStateListeners = new Set<TunnelStateListener>();
+  private lastTunnelState: TunnelStateSnapshot | null = null;
+  // Server tunnel.state revisions are only monotonic within one gateway
+  // process; this guard is reset on disconnect so a restarted gateway's
+  // snapshots are not dropped. Subscribers see a client-side monotonic
+  // revision instead.
+  private lastTunnelStateServerRevision = 0;
+  private tunnelStateRevisionCounter = 0;
   readonly conversationStreams = new ConversationStreamClient({
     request: (type, payload) => this.request(type, payload),
   });
@@ -1224,6 +1187,16 @@ export class GatewayWebSocketClient {
     replayTerminalSnapshot(this.terminalSessionSnapshot, listener);
     return () => {
       this.terminalListeners.delete(listener);
+    };
+  }
+
+  subscribeTunnelState(listener: TunnelStateListener): () => void {
+    this.tunnelStateListeners.add(listener);
+    if (this.lastTunnelState) {
+      listener(this.lastTunnelState);
+    }
+    return () => {
+      this.tunnelStateListeners.delete(listener);
     };
   }
 
@@ -1697,55 +1670,54 @@ export class GatewayWebSocketClient {
     return (response.sessions ?? []).map(normalizeTerminalSession);
   }
 
-  async listTunnels(): Promise<TunnelSummary[]> {
-    return normalizeTunnelListResponse(
-      await this.requestWithRecovery<RawTunnelResponse>("tunnel.list", {}),
-    );
-  }
-
-  async createTunnel(input: TunnelCreateInput): Promise<TunnelSummary> {
+  async createTunnel(input: TunnelCreateInput): Promise<void> {
     const payload: Record<string, unknown> = {
-      targetUrl: input.targetUrl,
-      ttlSeconds: input.ttlSeconds,
-      name: input.name,
+      target_url: input.targetUrl,
+      ttl_seconds: input.ttlSeconds,
     };
-    if (input.projectPathKey?.trim()) {
-      payload.projectPathKey = input.projectPathKey.trim();
+    const name = input.name?.trim();
+    if (name) {
+      payload.name = name;
     }
-    return normalizeTunnelResponse(
-      await this.request<RawTunnelResponse>("tunnel.create", payload),
-    );
+    const projectPathKey = input.projectPathKey?.trim();
+    if (projectPathKey) {
+      payload.project_path_key = projectPathKey;
+    }
+    await this.request("tunnel.create", payload);
   }
 
-  async updateTunnel(input: TunnelUpdateInput): Promise<TunnelSummary> {
+  async updateTunnel(input: TunnelUpdateInput): Promise<void> {
     const payload: Record<string, unknown> = {
-      id: input.id,
-      targetUrl: input.targetUrl,
-      ttlSeconds: input.ttlSeconds,
-      name: input.name,
+      tunnel_id: input.id,
+      target_url: input.targetUrl,
     };
-    if (input.projectPathKey?.trim()) {
-      payload.projectPathKey = input.projectPathKey.trim();
+    // Omitting ttl_seconds keeps the current expiry; sending it re-buckets
+    // the expiry from now.
+    if (input.ttlSeconds !== undefined) {
+      payload.ttl_seconds = input.ttlSeconds;
     }
-    return normalizeTunnelResponse(
-      await this.request<RawTunnelResponse>("tunnel.update", payload),
-    );
+    const name = input.name?.trim();
+    if (name) {
+      payload.name = name;
+    }
+    const projectPathKey = input.projectPathKey?.trim();
+    if (projectPathKey) {
+      payload.project_path_key = projectPathKey;
+    }
+    await this.request("tunnel.update", payload);
   }
 
-  async closeTunnel(id: string): Promise<TunnelSummary> {
-    return normalizeTunnelResponse(
-      await this.request<RawTunnelResponse>("tunnel.close", {
-        id,
-      }),
-    );
+  async closeTunnel(id: string): Promise<void> {
+    await this.request("tunnel.close", { tunnel_id: id });
   }
 
-  async probeTunnel(id: string): Promise<TunnelSummary> {
-    return normalizeTunnelResponse(
-      await this.request<RawTunnelResponse>("tunnel.probe", {
-        id,
-      }),
-    );
+  async checkTunnel(id?: string): Promise<void> {
+    const payload: Record<string, unknown> = {};
+    const tunnelId = id?.trim();
+    if (tunnelId) {
+      payload.tunnel_id = tunnelId;
+    }
+    await this.request("tunnel.check", payload);
   }
 
   async listHistory(
@@ -2112,6 +2084,7 @@ export class GatewayWebSocketClient {
         this.terminalListeners.size > 0 ||
         this.sftpTransferListeners.size > 0 ||
         this.chatActivityListeners.size > 0 ||
+        this.tunnelStateListeners.size > 0 ||
         this.conversationStreams.size > 0)
     );
   }
@@ -2234,6 +2207,23 @@ export class GatewayWebSocketClient {
   private emitSftpTransfer(event: SftpTransferEvent) {
     for (const listener of this.sftpTransferListeners) {
       listener(event);
+    }
+  }
+
+  private emitTunnelState(snapshot: TunnelStateSnapshot) {
+    // Drop stale/reordered snapshots from the current gateway process.
+    if (snapshot.revision <= this.lastTunnelStateServerRevision) {
+      return;
+    }
+    this.lastTunnelStateServerRevision = snapshot.revision;
+    this.tunnelStateRevisionCounter += 1;
+    const next: TunnelStateSnapshot = {
+      ...snapshot,
+      revision: this.tunnelStateRevisionCounter,
+    };
+    this.lastTunnelState = next;
+    for (const listener of this.tunnelStateListeners) {
+      listener(next);
     }
   }
 
@@ -2451,6 +2441,17 @@ export class GatewayWebSocketClient {
       return;
     }
 
+    if (envelope.type === "tunnel.state") {
+      const payload =
+        envelope.payload && typeof envelope.payload === "object"
+          ? (envelope.payload as RawTunnelStatePayload)
+          : null;
+      if (payload) {
+        this.emitTunnelState(normalizeTunnelStateSnapshot(payload));
+      }
+      return;
+    }
+
     if (envelope.type === "chat_queue.event") {
       const snapshot = normalizeChatQueueEvent(envelope.payload as RawChatQueueEvent);
       if (snapshot) {
@@ -2551,6 +2552,9 @@ export class GatewayWebSocketClient {
       }
     }
     this.lastInboundAt = 0;
+    // A reconnect may land on a restarted gateway whose tunnel.state
+    // revisions start over; accept the fresh post-auth snapshot.
+    this.lastTunnelStateServerRevision = 0;
     if (!this.disposed) {
       this.scheduleReconnect();
     }
@@ -2739,11 +2743,11 @@ export type GatewayWebSocketClientLike = {
   ): Promise<TerminalSession>;
   closeTerminal(sessionId: string, projectPathKey?: string): Promise<TerminalSession>;
   closeProjectTerminals(projectPathKey: string): Promise<TerminalSession[]>;
-  listTunnels(): Promise<TunnelSummary[]>;
-  createTunnel(input: TunnelCreateInput): Promise<TunnelSummary>;
-  updateTunnel(input: TunnelUpdateInput): Promise<TunnelSummary>;
-  probeTunnel(id: string): Promise<TunnelSummary>;
-  closeTunnel(id: string): Promise<TunnelSummary>;
+  subscribeTunnelState(listener: (snapshot: TunnelStateSnapshot) => void): () => void;
+  createTunnel(input: TunnelCreateInput): Promise<void>;
+  updateTunnel(input: TunnelUpdateInput): Promise<void>;
+  closeTunnel(id: string): Promise<void>;
+  checkTunnel(id?: string): Promise<void>;
   listHistory(page: number, pageSize: number, filter?: HistoryListFilter): Promise<HistoryList>;
   listHistoryWorkdirs(): Promise<HistoryWorkdirsResponse>;
   listSharedHistory(page: number, pageSize: number): Promise<HistoryList>;

@@ -280,7 +280,6 @@ export function summarizeToolCall(
                       typeof args.targetUrl === "string"
                         ? `target=${summarizeToolArg(args.targetUrl)}`
                         : null,
-                      typeof args.slug === "string" ? `slug=${summarizeToolArg(args.slug)}` : null,
                       typeof args.id === "string" ? `id=${summarizeToolArg(args.id)}` : null,
                     ]
                   : name === "SSHManager" || name === "SshManager"

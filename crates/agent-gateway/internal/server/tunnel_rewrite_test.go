@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	gatewayv1 "github.com/liveagent/agent-gateway/internal/proto/v1"
 )
 
 func TestTunnelResponseRewriteKindFor(t *testing.T) {
@@ -124,9 +123,9 @@ func TestRewriteTunnelHTMLBodyPrefixesRootRelativeAttributes(t *testing.T) {
 func TestRewriteTunnelBodyStripsTargetBasePath(t *testing.T) {
 	t.Parallel()
 
-	tunnel := &gatewayv1.TunnelSummary{
-		Slug:      "base-slug",
-		TargetUrl: "http://127.0.0.1:3100/app",
+	tunnel := tunnelRewrite{
+		slug:      "base-slug",
+		targetURL: "http://127.0.0.1:3100/app",
 	}
 	input := strings.Join([]string{
 		`<script src="/app/assets/main.js"></script>`,
@@ -304,10 +303,10 @@ func TestRewriteTunnelLocationPreservesQueryAndFragment(t *testing.T) {
 	}
 }
 
-func tunnelRewriteTestSummary() *gatewayv1.TunnelSummary {
-	return &gatewayv1.TunnelSummary{
-		Slug:      "test-slug",
-		TargetUrl: "http://127.0.0.1:3100",
+func tunnelRewriteTestSummary() tunnelRewrite {
+	return tunnelRewrite{
+		slug:      "test-slug",
+		targetURL: "http://127.0.0.1:3100",
 	}
 }
 

@@ -64,10 +64,7 @@ import type { BuiltinToolExecutionContext } from "../../../lib/tools/builtinType
 import { createFileToolState } from "../../../lib/tools/fileToolState";
 import type { SkillAccessPolicy } from "../../../lib/tools/skillAccessPolicy";
 import type { SshManagerSessionChange } from "../../../lib/tools/sshManagerTools";
-import {
-  TUNNEL_MANAGER_CHANGED_EVENT,
-  type TunnelManagerChange,
-} from "../../../lib/tools/tunnelManagerTools";
+import type { TunnelManagerChange } from "../../../lib/tools/tunnelManagerTools";
 import {
   recordSilentMemoryTurnBoundary,
   type runSilentMemoryExtraction,
@@ -341,7 +338,7 @@ export type RunAgentConversationTurnParams = {
   enabledMcpServerIds: string[];
   selectableMcpServers: AppSettings["mcp"]["servers"];
   remoteWebTunnelsEnabled?: boolean;
-  remoteGatewayOnline?: boolean;
+  tunnelPublicBaseUrl?: string;
   onTunnelsChanged?: (change: TunnelManagerChange) => void;
   sshHosts?: SshHostConfig[];
   associatedSshHostIds?: string[];
@@ -429,7 +426,7 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     enabledMcpServerIds,
     selectableMcpServers,
     remoteWebTunnelsEnabled,
-    remoteGatewayOnline,
+    tunnelPublicBaseUrl,
     onTunnelsChanged,
     sshHosts,
     associatedSshHostIds,
@@ -555,18 +552,13 @@ export async function runAgentConversationTurn(params: RunAgentConversationTurnP
     enabledMcpServerIds,
     selectableMcpServers,
     remoteWebTunnelsEnabled,
-    remoteGatewayOnline,
     tunnelProjectPathKey: workspaceProjectPathKey(effectiveWorkdir),
+    tunnelPublicBaseUrl,
     sshHosts,
     associatedSshHostIds,
     sshManagerRemoteAllowed,
     onSshSessionsChanged,
-    onTunnelsChanged: (change) => {
-      onTunnelsChanged?.(change);
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent(TUNNEL_MANAGER_CHANGED_EVENT));
-      }
-    },
+    onTunnelsChanged,
     onMcpLoadError: (message) => {
       const warning = `MCP 工具加载失败，已跳过并继续对话：${message || "未知错误"}`;
       console.warn(warning);

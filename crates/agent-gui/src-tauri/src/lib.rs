@@ -235,11 +235,11 @@ macro_rules! app_invoke_handler {
             commands::gateway::gateway_publish_chat_queue_event,
             commands::gateway::gateway_publish_chat_runtime_snapshot,
             commands::gateway::gateway_publish_settings_sync,
-            commands::gateway::gateway_tunnel_list,
+            commands::gateway::gateway_tunnel_state,
             commands::gateway::gateway_tunnel_create,
             commands::gateway::gateway_tunnel_update,
-            commands::gateway::gateway_tunnel_probe,
             commands::gateway::gateway_tunnel_close,
+            commands::gateway::gateway_tunnel_check,
             services::proxy::proxy_get_server_info,
         ]
     };

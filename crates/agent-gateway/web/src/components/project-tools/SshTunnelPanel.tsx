@@ -230,9 +230,7 @@ export function SshTunnelPanel(props: SshTunnelPanelProps) {
   const [prompt, setPrompt] = useState<TerminalSshPrompt | null>(null);
   const [promptAnswer, setPromptAnswer] = useState("");
   const [answeringPrompt, setAnsweringPrompt] = useState(false);
-  const [latencyBySessionId, setLatencyBySessionId] = useState<Record<string, SshLatencyState>>(
-    {},
-  );
+  const [latencyBySessionId, setLatencyBySessionId] = useState<Record<string, SshLatencyState>>({});
   const latencyRequestsRef = useRef<Set<string>>(new Set());
   const pendingCreateRef = useRef<PendingSshCreate | null>(null);
   const onSshSessionsReconcileRef = useRef(onSshSessionsReconcile);
@@ -561,10 +559,7 @@ export function SshTunnelPanel(props: SshTunnelPanelProps) {
     const state = latencyBySessionId[session.id];
     if (state?.failed) return t("projectTools.sshTunnelLatencyUnknown");
     if (state?.latencyMs) {
-      return t("projectTools.sshTunnelLatencyValue").replace(
-        "{ms}",
-        String(state.latencyMs),
-      );
+      return t("projectTools.sshTunnelLatencyValue").replace("{ms}", String(state.latencyMs));
     }
     if (state?.loading) return t("projectTools.sshTunnelLatencyChecking");
     return t("projectTools.sshTunnelLatencyUnknown");
@@ -815,7 +810,9 @@ export function SshTunnelPanel(props: SshTunnelPanelProps) {
                   value={createTitle}
                   onChange={(event) => setCreateTitle(event.currentTarget.value)}
                   className="h-10 w-full rounded-lg border border-border/70 bg-background/80 px-3 text-[11px] text-foreground outline-none transition-colors placeholder:text-[11px] placeholder:text-muted-foreground/70 focus-visible:border-emerald-500/50 focus-visible:ring-1 focus-visible:ring-emerald-500/20"
-                  placeholder={selectedCreateHost?.name || t("projectTools.sshTunnelTabTitlePlaceholder")}
+                  placeholder={
+                    selectedCreateHost?.name || t("projectTools.sshTunnelTabTitlePlaceholder")
+                  }
                 />
               </label>
 
@@ -873,7 +870,12 @@ export function SshTunnelPanel(props: SshTunnelPanelProps) {
               >
                 {t("projectTools.sshTunnelCreateCancel")}
               </Button>
-              <Button type="submit" size="sm" className="h-8 rounded-lg px-3 text-xs" disabled={!canCreate}>
+              <Button
+                type="submit"
+                size="sm"
+                className="h-8 rounded-lg px-3 text-xs"
+                disabled={!canCreate}
+              >
                 {creating ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
                 {creating
                   ? t("projectTools.sshTunnelConnecting")
@@ -894,9 +896,7 @@ export function SshTunnelPanel(props: SshTunnelPanelProps) {
               <div className="truncate text-sm font-semibold tracking-tight text-foreground">
                 {t("projectTools.sshTunnelTitle")}
               </div>
-              <div className="truncate text-xs text-muted-foreground">
-                {statusText}
-              </div>
+              <div className="truncate text-xs text-muted-foreground">{statusText}</div>
             </div>
             {canShowCreateButton ? (
               <button

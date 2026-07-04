@@ -18,7 +18,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useLocale } from "../../i18n";
-import { computeGitGraph, GRAPH_COLORS, type GraphColor, type GraphRow } from "../../lib/git/gitGraph";
+import {
+  computeGitGraph,
+  GRAPH_COLORS,
+  type GraphColor,
+  type GraphRow,
+} from "../../lib/git/gitGraph";
 import type {
   GitClient,
   GitCommitDetails,
@@ -36,8 +41,8 @@ import { getFileTypeIcon } from "../chat/fileTypeIcons";
 import {
   AlertTriangle,
   BrushCleaning,
-  ChevronRight,
   CheckCircle2,
+  ChevronRight,
   Cloud,
   Copy,
   Download,
@@ -97,7 +102,11 @@ function gitReviewScrollbarThumbSize(viewportSize: number, scrollSize: number, t
   );
 }
 
-function gitReviewScrollbarThumbOffset(scrollOffset: number, maxScroll: number, maxThumbOffset: number) {
+function gitReviewScrollbarThumbOffset(
+  scrollOffset: number,
+  maxScroll: number,
+  maxThumbOffset: number,
+) {
   if (maxScroll <= 0 || maxThumbOffset <= 0) return 0;
   return (scrollOffset / maxScroll) * maxThumbOffset;
 }
@@ -130,11 +139,9 @@ function updateGitReviewScrollbarOverlay(element: HTMLElement) {
   const rect = element.getBoundingClientRect();
   const style = window.getComputedStyle(element);
   const canScrollVertically =
-    isScrollableOverflowValue(style.overflowY) &&
-    element.scrollHeight > element.clientHeight + 1;
+    isScrollableOverflowValue(style.overflowY) && element.scrollHeight > element.clientHeight + 1;
   const canScrollHorizontally =
-    isScrollableOverflowValue(style.overflowX) &&
-    element.scrollWidth > element.clientWidth + 1;
+    isScrollableOverflowValue(style.overflowX) && element.scrollWidth > element.clientWidth + 1;
   const visible =
     element.dataset.scrollActive === "true" || element.dataset.scrollbarHover === "true";
   const cornerOffset = GIT_REVIEW_SCROLLBAR_THUMB_SIZE_PX + GIT_REVIEW_SCROLLBAR_EDGE_OFFSET_PX;
@@ -353,16 +360,14 @@ function diffSelectionAutoScrollDelta(
   if (pointer < start + DIFF_SELECTION_AUTOSCROLL_EDGE_PX) {
     const ratio = Math.min(
       1,
-      (start + DIFF_SELECTION_AUTOSCROLL_EDGE_PX - pointer) /
-        DIFF_SELECTION_AUTOSCROLL_EDGE_PX,
+      (start + DIFF_SELECTION_AUTOSCROLL_EDGE_PX - pointer) / DIFF_SELECTION_AUTOSCROLL_EDGE_PX,
     );
     return -Math.max(2, Math.round(ratio * DIFF_SELECTION_AUTOSCROLL_MAX_STEP_PX));
   }
   if (pointer > end - DIFF_SELECTION_AUTOSCROLL_EDGE_PX) {
     const ratio = Math.min(
       1,
-      (pointer - (end - DIFF_SELECTION_AUTOSCROLL_EDGE_PX)) /
-        DIFF_SELECTION_AUTOSCROLL_EDGE_PX,
+      (pointer - (end - DIFF_SELECTION_AUTOSCROLL_EDGE_PX)) / DIFF_SELECTION_AUTOSCROLL_EDGE_PX,
     );
     return Math.max(2, Math.round(ratio * DIFF_SELECTION_AUTOSCROLL_MAX_STEP_PX));
   }
@@ -399,11 +404,9 @@ function scrollDiffSelectionViewportForPointer(
 function isScrollableDiffSelectionElement(element: HTMLElement) {
   const style = window.getComputedStyle(element);
   const canScrollY =
-    isScrollableOverflowValue(style.overflowY) &&
-    element.scrollHeight > element.clientHeight + 1;
+    isScrollableOverflowValue(style.overflowY) && element.scrollHeight > element.clientHeight + 1;
   const canScrollX =
-    isScrollableOverflowValue(style.overflowX) &&
-    element.scrollWidth > element.clientWidth + 1;
+    isScrollableOverflowValue(style.overflowX) && element.scrollWidth > element.clientWidth + 1;
   return canScrollY || canScrollX;
 }
 
@@ -432,8 +435,7 @@ function resolveDiffSelectionScrollViewports(
     return viewports;
   }
 
-  let current: HTMLElement | null =
-    target instanceof HTMLElement ? target : target.parentElement;
+  let current: HTMLElement | null = target instanceof HTMLElement ? target : target.parentElement;
   while (current && current !== root) {
     addViewport(current);
     current = current.parentElement;
@@ -841,7 +843,13 @@ function GitDiscardConfirmModal(props: {
           <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={loading}>
             {t("chat.cancel")}
           </Button>
-          <Button type="button" variant="destructive" size="sm" onClick={onConfirm} disabled={loading}>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={onConfirm}
+            disabled={loading}
+          >
             {loading ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
             ) : isAll ? (
@@ -1037,7 +1045,7 @@ function parseDiffStatFile(line: string, index: number): DiffStatFile | null {
     };
   }
 
-  const match = /^(\d+)\s*([+\-]*)/.exec(details);
+  const match = /^(\d+)\s*([+-]*)/.exec(details);
   if (!match?.[1]) return null;
   const changes = Number(match[1]);
   if (!Number.isFinite(changes)) return null;
@@ -1104,17 +1112,12 @@ function buildPatchChunks(patch: string, title: string): PatchChunk[] {
       label,
       chunk,
       lineCount,
-      large:
-        chunk.length > LARGE_DIFF_CHUNK_CHAR_LIMIT ||
-        lineCount > LARGE_DIFF_CHUNK_LINE_LIMIT,
+      large: chunk.length > LARGE_DIFF_CHUNK_CHAR_LIMIT || lineCount > LARGE_DIFF_CHUNK_LINE_LIMIT,
     };
   });
 }
 
-const DiffChunkView = memo(function DiffChunkView(props: {
-  item: PatchChunk;
-  isDark: boolean;
-}) {
+const DiffChunkView = memo(function DiffChunkView(props: { item: PatchChunk; isDark: boolean }) {
   const { item, isDark } = props;
   const { t } = useLocale();
   const diffFile = useMemo(() => {
@@ -1486,8 +1489,7 @@ function DiffContent(props: {
   const selectionContextMenuPosition = selectionContextMenu
     ? clampDiffSelectionContextMenuPosition(selectionContextMenu.x, selectionContextMenu.y)
     : null;
-  const copySelectedTextLabel =
-    locale === "en-US" ? "Copy selected text" : "复制选中文本";
+  const copySelectedTextLabel = locale === "en-US" ? "Copy selected text" : "复制选中文本";
 
   return (
     <div
@@ -1618,7 +1620,9 @@ function DiffReviewCard(props: {
           ) : null}
         </div>
         <div className="flex shrink-0 items-center gap-1">
-          {diffLoading ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin text-muted-foreground" /> : null}
+          {diffLoading ? (
+            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          ) : null}
           <Button
             type="button"
             size="sm"
@@ -1664,17 +1668,15 @@ function statusTone(entry: GitStatusEntry) {
 
 function isDeletedStatusEntry(entry: GitStatusEntry) {
   if (entry.untracked) return false;
-  return (
-    entry.kind === "deleted" ||
-    entry.indexStatus === "D" ||
-    entry.worktreeStatus === "D"
-  );
+  return entry.kind === "deleted" || entry.indexStatus === "D" || entry.worktreeStatus === "D";
 }
 
 function statusLabel(entry: GitStatusEntry) {
   if (entry.conflicted) return "U";
   if (entry.untracked) return "U";
-  const statuses = [entry.indexStatus, entry.worktreeStatus].filter((status) => status && status !== ".");
+  const statuses = [entry.indexStatus, entry.worktreeStatus].filter(
+    (status) => status && status !== ".",
+  );
   if (entry.kind === "renamed" || statuses.includes("R")) return "R";
   if (statuses.includes("D")) return "D";
   if (statuses.includes("A")) return "A";
@@ -1801,7 +1803,12 @@ const COMMIT_REF_KIND_TITLE: Record<CommitRefKind, string> = {
 };
 
 function normalizeRefRemoteName(remoteName: string | undefined) {
-  return remoteName?.trim().replace(/^refs\/remotes\//, "").replace(/\/HEAD$/, "") ?? "";
+  return (
+    remoteName
+      ?.trim()
+      .replace(/^refs\/remotes\//, "")
+      .replace(/\/HEAD$/, "") ?? ""
+  );
 }
 
 function isLikelyRemoteRefLabel(ref: string, remoteName: string | undefined) {
@@ -1915,20 +1922,11 @@ function commitRefChipClass(kind: CommitRefKind, selected: boolean) {
       );
     case "ref":
     default:
-      return cn(
-        baseClass,
-        "border-border/70 bg-muted/50 text-muted-foreground ring-border/60",
-      );
+      return cn(baseClass, "border-border/70 bg-muted/50 text-muted-foreground ring-border/60");
   }
 }
 
-function CommitRefTagIcon({
-  kind,
-  variant,
-}: {
-  kind: CommitRefKind;
-  variant: "list" | "detail";
-}) {
+function CommitRefTagIcon({ kind, variant }: { kind: CommitRefKind; variant: "list" | "detail" }) {
   const className = cn("shrink-0 opacity-85", variant === "detail" ? "h-3 w-3" : "h-2.5 w-2.5");
   switch (kind) {
     case "head":
@@ -2020,9 +2018,7 @@ function CommitRefTags({
         </span>
       ))}
       {hiddenCount > 0 ? (
-        <span
-          className={cn(commitRefChipClass("ref", selected), "shrink-0 px-1.5 leading-[14px]")}
-        >
+        <span className={cn(commitRefChipClass("ref", selected), "shrink-0 px-1.5 leading-[14px]")}>
           +{hiddenCount}
         </span>
       ) : null}
@@ -2172,10 +2168,7 @@ function GitGraphSvgCell({ row }: { row: GraphRow }) {
             return null;
           }
 
-          if (
-            outputIndex < row.outputLanes.length &&
-            lane.id === row.outputLanes[outputIndex].id
-          ) {
+          if (outputIndex < row.outputLanes.length && lane.id === row.outputLanes[outputIndex].id) {
             if (index === outputIndex) {
               outputIndex++;
               return (
@@ -2344,7 +2337,9 @@ function GitOperationNoticeToast({
             <div
               className={cn(
                 "mt-0.5 max-h-24 overflow-auto whitespace-pre-wrap break-words text-xs leading-5",
-                isSuccess ? "text-emerald-800/80 dark:text-emerald-100/75" : "text-red-800/80 dark:text-red-100/75",
+                isSuccess
+                  ? "text-emerald-800/80 dark:text-emerald-100/75"
+                  : "text-red-800/80 dark:text-red-100/75",
               )}
             >
               {notice.message}
@@ -2544,15 +2539,11 @@ function resolveContainedSelectionText(root: HTMLElement | null) {
 function clampDiffSelectionContextMenuPosition(x: number, y: number) {
   const maxLeft = Math.max(
     DIFF_SELECTION_CONTEXT_MENU_MARGIN,
-    window.innerWidth -
-      DIFF_SELECTION_CONTEXT_MENU_WIDTH -
-      DIFF_SELECTION_CONTEXT_MENU_MARGIN,
+    window.innerWidth - DIFF_SELECTION_CONTEXT_MENU_WIDTH - DIFF_SELECTION_CONTEXT_MENU_MARGIN,
   );
   const maxTop = Math.max(
     DIFF_SELECTION_CONTEXT_MENU_MARGIN,
-    window.innerHeight -
-      DIFF_SELECTION_CONTEXT_MENU_HEIGHT -
-      DIFF_SELECTION_CONTEXT_MENU_MARGIN,
+    window.innerHeight - DIFF_SELECTION_CONTEXT_MENU_HEIGHT - DIFF_SELECTION_CONTEXT_MENU_MARGIN,
   );
 
   return {
@@ -2703,7 +2694,9 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
   const [historyDiffTitle, setHistoryDiffTitle] = useState("");
   const [historyDiffSubtitle, setHistoryDiffSubtitle] = useState("");
   const [changeContextMenu, setChangeContextMenu] = useState<ChangeContextMenuState | null>(null);
-  const [historyContextMenu, setHistoryContextMenu] = useState<HistoryContextMenuState | null>(null);
+  const [historyContextMenu, setHistoryContextMenu] = useState<HistoryContextMenuState | null>(
+    null,
+  );
   const [changesMenu, setChangesMenu] = useState<ChangesMenuState | null>(null);
   const [branchFromCommit, setBranchFromCommit] = useState<GitBranchFromCommitState | null>(null);
   const [branchFromCommitName, setBranchFromCommitName] = useState("");
@@ -2823,14 +2816,10 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
   useEffect(() => {
     if (useSplitReviewLayout) return;
     const el =
-      changesStackedPane === "list"
-        ? changesListPaneRef.current
-        : changesDetailPaneRef.current;
+      changesStackedPane === "list" ? changesListPaneRef.current : changesDetailPaneRef.current;
     if (!el) return;
     const cls =
-      changesStackedDir === "back"
-        ? "git-review-pane-enter-back"
-        : "git-review-pane-enter-forward";
+      changesStackedDir === "back" ? "git-review-pane-enter-back" : "git-review-pane-enter-forward";
     el.classList.remove("git-review-pane-enter-forward", "git-review-pane-enter-back");
     void el.offsetHeight;
     el.classList.add(cls);
@@ -2839,14 +2828,10 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
   useEffect(() => {
     if (useSplitReviewLayout) return;
     const el =
-      historyStackedPane === "list"
-        ? historyListPaneRef.current
-        : historyDetailPaneRef.current;
+      historyStackedPane === "list" ? historyListPaneRef.current : historyDetailPaneRef.current;
     if (!el) return;
     const cls =
-      historyStackedDir === "back"
-        ? "git-review-pane-enter-back"
-        : "git-review-pane-enter-forward";
+      historyStackedDir === "back" ? "git-review-pane-enter-back" : "git-review-pane-enter-forward";
     el.classList.remove("git-review-pane-enter-forward", "git-review-pane-enter-back");
     void el.offsetHeight;
     el.classList.add(cls);
@@ -2907,7 +2892,11 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
         } else {
           branchDiffSignatureRef.current = "";
           setBranchDiff(null);
-          setBranchError(branchResult.reason instanceof Error ? branchResult.reason.message : String(branchResult.reason));
+          setBranchError(
+            branchResult.reason instanceof Error
+              ? branchResult.reason.message
+              : String(branchResult.reason),
+          );
         }
         if (worktreeResult.status === "fulfilled") {
           const signature = gitDiffSignature(worktreeResult.value);
@@ -2919,7 +2908,11 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
         } else {
           worktreeDiffSignatureRef.current = "";
           setWorktreeDiff(null);
-          setError(worktreeResult.reason instanceof Error ? worktreeResult.reason.message : String(worktreeResult.reason));
+          setError(
+            worktreeResult.reason instanceof Error
+              ? worktreeResult.reason.message
+              : String(worktreeResult.reason),
+          );
         }
       } catch (err) {
         if (diffRequestIdRef.current === requestId) {
@@ -2937,72 +2930,75 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
     [clearDiffs, cwd, gitClient],
   );
 
-  const refresh = useCallback(async (options: GitRefreshOptions = {}) => {
-    if (refreshInFlightRef.current) {
-      return;
-    }
-    refreshInFlightRef.current = true;
-    const silent = options.silent === true;
-    const force = options.force !== false;
-    if (!gitClient || !cwd.trim()) {
-      statusSignatureRef.current = "";
-      setState(emptyGitRepositoryState(cwd));
-      setSelectedPath("");
-      clearDiffs();
-      refreshInFlightRef.current = false;
-      return;
-    }
-    if (!silent) {
-      setLoading(true);
-      setError("");
-      setBranchError("");
-    }
-    try {
-      const nextState = await gitClient.status(cwd);
-      const previousSignature = statusSignatureRef.current;
-      const nextSignature = gitRepositoryStateSignature(nextState);
-      const stateChanged = previousSignature !== nextSignature;
-      statusSignatureRef.current = nextSignature;
-      if (options.notifyChanged && previousSignature && stateChanged) {
-        suppressNextGitChangedRef.current = true;
-        dispatchGitChanged(cwd);
-      }
-      if (!force && !stateChanged) {
-        const currentPath = selectedPathRef.current;
-        if (currentPath && reviewModeRef.current === "changes") {
-          void loadDiffForPath(currentPath, { silent: true, force: false });
-        }
+  const refresh = useCallback(
+    async (options: GitRefreshOptions = {}) => {
+      if (refreshInFlightRef.current) {
         return;
       }
-      setState(nextState);
-      if (nextState.status !== "ready") {
-        selectedPathRef.current = "";
+      refreshInFlightRef.current = true;
+      const silent = options.silent === true;
+      const force = options.force !== false;
+      if (!gitClient || !cwd.trim()) {
+        statusSignatureRef.current = "";
+        setState(emptyGitRepositoryState(cwd));
         setSelectedPath("");
         clearDiffs();
+        refreshInFlightRef.current = false;
         return;
       }
-      const currentPath = selectedPathRef.current;
-      const nextPath = nextState.entries.some((entry) => entry.path === currentPath)
-        ? currentPath
-        : nextState.entries[0]?.path ?? "";
-      selectedPathRef.current = nextPath;
-      setSelectedPath(nextPath);
-      if (nextPath) {
-        void loadDiffForPath(nextPath, { silent: silent && nextPath === currentPath });
-      } else {
-        clearDiffs();
-      }
-    } catch (err) {
-      if (!silent || force) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      refreshInFlightRef.current = false;
       if (!silent) {
-        setLoading(false);
+        setLoading(true);
+        setError("");
+        setBranchError("");
       }
-    }
-  }, [clearDiffs, cwd, gitClient, loadDiffForPath]);
+      try {
+        const nextState = await gitClient.status(cwd);
+        const previousSignature = statusSignatureRef.current;
+        const nextSignature = gitRepositoryStateSignature(nextState);
+        const stateChanged = previousSignature !== nextSignature;
+        statusSignatureRef.current = nextSignature;
+        if (options.notifyChanged && previousSignature && stateChanged) {
+          suppressNextGitChangedRef.current = true;
+          dispatchGitChanged(cwd);
+        }
+        if (!force && !stateChanged) {
+          const currentPath = selectedPathRef.current;
+          if (currentPath && reviewModeRef.current === "changes") {
+            void loadDiffForPath(currentPath, { silent: true, force: false });
+          }
+          return;
+        }
+        setState(nextState);
+        if (nextState.status !== "ready") {
+          selectedPathRef.current = "";
+          setSelectedPath("");
+          clearDiffs();
+          return;
+        }
+        const currentPath = selectedPathRef.current;
+        const nextPath = nextState.entries.some((entry) => entry.path === currentPath)
+          ? currentPath
+          : (nextState.entries[0]?.path ?? "");
+        selectedPathRef.current = nextPath;
+        setSelectedPath(nextPath);
+        if (nextPath) {
+          void loadDiffForPath(nextPath, { silent: silent && nextPath === currentPath });
+        } else {
+          clearDiffs();
+        }
+      } catch (err) {
+        if (!silent || force) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        refreshInFlightRef.current = false;
+        if (!silent) {
+          setLoading(false);
+        }
+      }
+    },
+    [clearDiffs, cwd, gitClient, loadDiffForPath],
+  );
 
   const loadCommitDiff = useCallback(
     async (commitSha: string, path = "") => {
@@ -3558,7 +3554,8 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
     contextEntrySection === "changes" && contextEntry ? canStageEntry(contextEntry) : false;
   const contextEntryCanUnstage =
     contextEntrySection === "staged" && contextEntry ? canUnstageEntry(contextEntry) : false;
-  const contextEntryCanAddToGitignore = contextEntrySection === "changes" && Boolean(contextEntry?.untracked);
+  const contextEntryCanAddToGitignore =
+    contextEntrySection === "changes" && Boolean(contextEntry?.untracked);
   const selectedCommit = useMemo(
     () => historyCommits.find((commit) => commit.sha === selectedCommitSha) ?? null,
     [historyCommits, selectedCommitSha],
@@ -3642,7 +3639,9 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
   });
   const currentHistoryItemIndex = useMemo(() => {
     const selectedIndex = selectedCommitSha
-      ? historyRows.findIndex((row) => row.type === "commit" && row.commit.sha === selectedCommitSha)
+      ? historyRows.findIndex(
+          (row) => row.type === "commit" && row.commit.sha === selectedCommitSha,
+        )
       : -1;
     if (selectedIndex >= 0) return selectedIndex;
 
@@ -3739,26 +3738,29 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
     [loadDiffForPath, useSplitReviewLayout],
   );
 
-  const selectCommit = useCallback((commit: GitCommitSummary) => {
-    selectedCommitShaRef.current = commit.sha;
-    selectedCommitFilePathRef.current = "";
-    setSelectedCommitSha(commit.sha);
-    setSelectedCommitFilePath("");
-    clearCommitDiff();
-    setHistoryDiffTitle("");
-    setHistoryDiffSubtitle("");
-    setHistoryError("");
-    setExpandedCommitShas((current) => {
-      const next = new Set(current);
-      if (next.has(commit.sha)) {
-        next.delete(commit.sha);
-      } else {
-        next.add(commit.sha);
-      }
-      expandedCommitShasRef.current = next;
-      return next;
-    });
-  }, [clearCommitDiff]);
+  const selectCommit = useCallback(
+    (commit: GitCommitSummary) => {
+      selectedCommitShaRef.current = commit.sha;
+      selectedCommitFilePathRef.current = "";
+      setSelectedCommitSha(commit.sha);
+      setSelectedCommitFilePath("");
+      clearCommitDiff();
+      setHistoryDiffTitle("");
+      setHistoryDiffSubtitle("");
+      setHistoryError("");
+      setExpandedCommitShas((current) => {
+        const next = new Set(current);
+        if (next.has(commit.sha)) {
+          next.delete(commit.sha);
+        } else {
+          next.add(commit.sha);
+        }
+        expandedCommitShasRef.current = next;
+        return next;
+      });
+    },
+    [clearCommitDiff],
+  );
 
   const selectCommitFile = useCallback(
     (commit: GitCommitSummary, file: GitCommitFile) => {
@@ -3774,37 +3776,42 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
         setHistoryStackedPane("detail");
       }
       setHistoryDiffTitle(t("projectTools.gitReview.commitDiff"));
-      setHistoryDiffSubtitle(`${basename(file.path)} - ${commit.shortSha || commit.sha.slice(0, 7)}`);
+      setHistoryDiffSubtitle(
+        `${basename(file.path)} - ${commit.shortSha || commit.sha.slice(0, 7)}`,
+      );
       setExpandedCommitShas(nextExpandedCommitShas);
       void loadCommitDiff(commit.sha, file.path);
     },
     [loadCommitDiff, t, useSplitReviewLayout],
   );
 
-  const focusHistoryCommit = useCallback((commit: GitCommitSummary) => {
-    selectedCommitShaRef.current = commit.sha;
-    selectedCommitFilePathRef.current = "";
-    setSelectedCommitSha(commit.sha);
-    setSelectedCommitFilePath("");
-    if (!useSplitReviewLayout) {
-      setHistoryStackedDir("forward");
-      setHistoryStackedPane("detail");
-    }
-    clearCommitDiff();
-    setHistoryDiffTitle("");
-    setHistoryDiffSubtitle("");
-    setHistoryError("");
-    setExpandedCommitShas((current) => {
-      if (current.has(commit.sha)) {
-        expandedCommitShasRef.current = current;
-        return current;
+  const focusHistoryCommit = useCallback(
+    (commit: GitCommitSummary) => {
+      selectedCommitShaRef.current = commit.sha;
+      selectedCommitFilePathRef.current = "";
+      setSelectedCommitSha(commit.sha);
+      setSelectedCommitFilePath("");
+      if (!useSplitReviewLayout) {
+        setHistoryStackedDir("forward");
+        setHistoryStackedPane("detail");
       }
-      const next = new Set(current);
-      next.add(commit.sha);
-      expandedCommitShasRef.current = next;
-      return next;
-    });
-  }, [clearCommitDiff, useSplitReviewLayout]);
+      clearCommitDiff();
+      setHistoryDiffTitle("");
+      setHistoryDiffSubtitle("");
+      setHistoryError("");
+      setExpandedCommitShas((current) => {
+        if (current.has(commit.sha)) {
+          expandedCommitShasRef.current = current;
+          return current;
+        }
+        const next = new Set(current);
+        next.add(commit.sha);
+        expandedCommitShasRef.current = next;
+        return next;
+      });
+    },
+    [clearCommitDiff, useSplitReviewLayout],
+  );
 
   const openHistoryContextMenu = useCallback(
     (
@@ -3827,10 +3834,7 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
       );
       const menuHeight =
         target.kind === "file" ? HISTORY_FILE_CONTEXT_MENU_HEIGHT : HISTORY_CONTEXT_MENU_HEIGHT;
-      const maxTop = Math.max(
-        8,
-        (panelRect?.height ?? window.innerHeight) - menuHeight - 8,
-      );
+      const maxTop = Math.max(8, (panelRect?.height ?? window.innerHeight) - menuHeight - 8);
       const x = Math.max(8, Math.min(left, maxLeft));
       const y = Math.max(8, Math.min(top, maxTop));
       if (target.kind === "file") {
@@ -3886,14 +3890,17 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
     [focusHistoryCommit, loadCommitDiff, selectCommitFile, t],
   );
 
-  const openHistoryCommitOnGithub = useCallback((commit: GitCommitSummary) => {
-    setHistoryContextMenu(null);
-    const url = gitHubCommitUrl(state.remoteUrl, commit.sha);
-    if (!url) return;
-    void openUrl(url).catch((err) => {
-      setHistoryError(err instanceof Error ? err.message : String(err));
-    });
-  }, [state.remoteUrl]);
+  const openHistoryCommitOnGithub = useCallback(
+    (commit: GitCommitSummary) => {
+      setHistoryContextMenu(null);
+      const url = gitHubCommitUrl(state.remoteUrl, commit.sha);
+      if (!url) return;
+      void openUrl(url).catch((err) => {
+        setHistoryError(err instanceof Error ? err.message : String(err));
+      });
+    },
+    [state.remoteUrl],
+  );
 
   const openCreateBranchFromCommit = useCallback((commit: GitCommitSummary) => {
     setHistoryContextMenu(null);
@@ -3940,7 +3947,9 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
       const requestId = commitDiffRequestIdRef.current + 1;
       commitDiffRequestIdRef.current = requestId;
       setHistoryDiffTitle(t("projectTools.gitReview.remoteCompare"));
-      setHistoryDiffSubtitle(`${state.upstream || "remote"} ↔ ${commit.shortSha || commit.sha.slice(0, 7)}`);
+      setHistoryDiffSubtitle(
+        `${state.upstream || "remote"} ↔ ${commit.shortSha || commit.sha.slice(0, 7)}`,
+      );
       setHistoryError("");
       setCommitDiff(null);
       setCommitDiffLoading(true);
@@ -4094,17 +4103,14 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
     [cwd, gitClient, runOperation],
   );
 
-  const discardEntry = useCallback(
-    (entry: GitStatusEntry) => {
-      setChangeContextMenu(null);
-      setDiscardConfirm({
-        kind: "entry",
-        path: entry.path,
-        oldPath: entry.oldPath ?? null,
-      });
-    },
-    [],
-  );
+  const discardEntry = useCallback((entry: GitStatusEntry) => {
+    setChangeContextMenu(null);
+    setDiscardConfirm({
+      kind: "entry",
+      path: entry.path,
+      oldPath: entry.oldPath ?? null,
+    });
+  }, []);
 
   const addEntryToGitignore = useCallback(
     (entry: GitStatusEntry) => {
@@ -4361,7 +4367,9 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
               }
             }}
           >
-            <RefreshCw className={cn("h-3.5 w-3.5", (loading || historyLoading) && "animate-spin")} />
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", (loading || historyLoading) && "animate-spin")}
+            />
           </Button>
           <Button
             size="sm"
@@ -4422,11 +4430,31 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
             </div>
             <div className="grid grid-cols-5">
               {[
-                { count: state.ahead, label: t("projectTools.gitReview.labelAhead"), tone: "text-sky-600 dark:text-sky-400" },
-                { count: state.behind, label: t("projectTools.gitReview.labelBehind"), tone: "text-orange-600 dark:text-orange-400" },
-                { count: state.dirtyCounts.staged, label: t("projectTools.gitReview.labelStaged"), tone: "text-emerald-600 dark:text-emerald-400" },
-                { count: state.dirtyCounts.unstaged, label: t("projectTools.gitReview.labelUnstaged"), tone: "text-amber-600 dark:text-amber-400" },
-                { count: state.dirtyCounts.untracked, label: t("projectTools.gitReview.labelUntracked"), tone: "text-violet-600 dark:text-violet-400" },
+                {
+                  count: state.ahead,
+                  label: t("projectTools.gitReview.labelAhead"),
+                  tone: "text-sky-600 dark:text-sky-400",
+                },
+                {
+                  count: state.behind,
+                  label: t("projectTools.gitReview.labelBehind"),
+                  tone: "text-orange-600 dark:text-orange-400",
+                },
+                {
+                  count: state.dirtyCounts.staged,
+                  label: t("projectTools.gitReview.labelStaged"),
+                  tone: "text-emerald-600 dark:text-emerald-400",
+                },
+                {
+                  count: state.dirtyCounts.unstaged,
+                  label: t("projectTools.gitReview.labelUnstaged"),
+                  tone: "text-amber-600 dark:text-amber-400",
+                },
+                {
+                  count: state.dirtyCounts.untracked,
+                  label: t("projectTools.gitReview.labelUntracked"),
+                  tone: "text-violet-600 dark:text-violet-400",
+                },
               ].map((item, index) => (
                 <div
                   key={item.label}
@@ -4532,8 +4560,7 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                   GIT_REVIEW_STACKED_PANE_BUTTON_CLASS,
                   (reviewMode === "changes"
                     ? changesStackedPane === "detail"
-                    : historyStackedPane === "detail") &&
-                    "bg-background text-foreground shadow-sm",
+                    : historyStackedPane === "detail") && "bg-background text-foreground shadow-sm",
                 )}
                 onClick={() => {
                   if (reviewMode === "changes") {
@@ -4563,9 +4590,7 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
           key="changes"
           className={cn(
             "git-review-tab-enter min-h-0 flex-1 gap-3 overflow-hidden p-3",
-            useSplitReviewLayout
-              ? `grid ${GIT_REVIEW_SPLIT_GRID_CLASS}`
-              : "flex flex-col",
+            useSplitReviewLayout ? `grid ${GIT_REVIEW_SPLIT_GRID_CLASS}` : "flex flex-col",
           )}
         >
           <aside
@@ -4629,64 +4654,68 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
               !useSplitReviewLayout && "flex-1",
             )}
           >
-          <div className="mb-3 flex shrink-0 items-center gap-2">
-            <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />
-            <Input
-              value={commitMessage}
-              onChange={(event) => setCommitMessage(event.target.value)}
-              placeholder={t("projectTools.gitReview.commitMessagePlaceholder")}
-              disabled={writeDisabled || operationBusy}
-              className="h-8 text-[11px] placeholder:text-[11px] focus-visible:ring-1 focus-visible:ring-border/40"
-            />
-            <Button
-              size="sm"
-              disabled={writeDisabled || operationBusy || !commitMessage.trim()}
-              onClick={() => {
-                void runOperation(
-                  "commit",
-                  () => gitClient!.commit(cwd, commitMessage),
-                  "commit",
-                ).then((ok) => {
-                  if (ok) setCommitMessage("");
-                });
-              }}
-            >
-              {busy === "commit" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : t("projectTools.gitReview.commit")}
-            </Button>
-          </div>
-          {selectedEntry ? (
-            <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-              <div className="flex shrink-0 items-center gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs">
-                <span className="text-muted-foreground">{t("projectTools.gitReview.selected")}</span>
-                <span className="min-w-0 flex-1 truncate font-medium" title={selectedEntry.path}>
-                  {selectedEntry.path}
-                </span>
-              </div>
-              <DiffReviewCard
-                activeView={activeDiffView}
-                branchDiff={branchDiff}
-                branchError={branchError}
-                diffLoading={diffLoading}
-                onActiveViewChange={setActiveDiffView}
-                showStat={useSplitReviewLayout}
-                worktreeDiff={worktreeDiff}
+            <div className="mb-3 flex shrink-0 items-center gap-2">
+              <GitCommitHorizontal className="h-4 w-4 text-muted-foreground" />
+              <Input
+                value={commitMessage}
+                onChange={(event) => setCommitMessage(event.target.value)}
+                placeholder={t("projectTools.gitReview.commitMessagePlaceholder")}
+                disabled={writeDisabled || operationBusy}
+                className="h-8 text-[11px] placeholder:text-[11px] focus-visible:ring-1 focus-visible:ring-border/40"
               />
+              <Button
+                size="sm"
+                disabled={writeDisabled || operationBusy || !commitMessage.trim()}
+                onClick={() => {
+                  void runOperation(
+                    "commit",
+                    () => gitClient!.commit(cwd, commitMessage),
+                    "commit",
+                  ).then((ok) => {
+                    if (ok) setCommitMessage("");
+                  });
+                }}
+              >
+                {busy === "commit" ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  t("projectTools.gitReview.commit")
+                )}
+              </Button>
             </div>
-          ) : (
-            <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-border/70 bg-muted/10 px-4 text-center text-xs text-muted-foreground">
-              {t("projectTools.gitReview.selectFileToViewDiff")}
-            </div>
-          )}
-        </main>
+            {selectedEntry ? (
+              <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                <div className="flex shrink-0 items-center gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs">
+                  <span className="text-muted-foreground">
+                    {t("projectTools.gitReview.selected")}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-medium" title={selectedEntry.path}>
+                    {selectedEntry.path}
+                  </span>
+                </div>
+                <DiffReviewCard
+                  activeView={activeDiffView}
+                  branchDiff={branchDiff}
+                  branchError={branchError}
+                  diffLoading={diffLoading}
+                  onActiveViewChange={setActiveDiffView}
+                  showStat={useSplitReviewLayout}
+                  worktreeDiff={worktreeDiff}
+                />
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center rounded-lg border border-border/70 bg-muted/10 px-4 text-center text-xs text-muted-foreground">
+                {t("projectTools.gitReview.selectFileToViewDiff")}
+              </div>
+            )}
+          </main>
         </div>
       ) : (
         <div
           key="history"
           className={cn(
             "git-review-tab-enter min-h-0 flex-1 gap-3 overflow-hidden p-3",
-            useSplitReviewLayout
-              ? `grid ${GIT_REVIEW_SPLIT_GRID_CLASS}`
-              : "flex flex-col",
+            useSplitReviewLayout ? `grid ${GIT_REVIEW_SPLIT_GRID_CLASS}` : "flex flex-col",
           )}
         >
           <aside
@@ -4728,7 +4757,10 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                   {historyError || t("projectTools.gitReview.noCommitHistory")}
                 </div>
               ) : (
-                <div className="relative" style={{ height: `${historyVirtualizer.getTotalSize()}px` }}>
+                <div
+                  className="relative"
+                  style={{ height: `${historyVirtualizer.getTotalSize()}px` }}
+                >
                   {historyVirtualizer.getVirtualItems().map((virtualRow) => {
                     const row = historyRows[virtualRow.index];
                     if (!row) return null;
@@ -4804,7 +4836,8 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                     if (row.type === "file") {
                       const TypeIcon = getFileTypeIcon(row.file.path, "file");
                       const fileSelected =
-                        row.commit.sha === selectedCommitSha && row.file.path === selectedCommitFilePath;
+                        row.commit.sha === selectedCommitSha &&
+                        row.file.path === selectedCommitFilePath;
                       const fileContextMenuOpen =
                         historyContextMenu?.kind === "file" &&
                         historyContextMenu.commitSha === row.commit.sha &&
@@ -4837,9 +4870,7 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                             }
                             onClick={() => selectCommitFile(row.commit, row.file)}
                           >
-                            {graphRow ? (
-                              <GitGraphContinuationCell row={graphRow} />
-                            ) : null}
+                            {graphRow ? <GitGraphContinuationCell row={graphRow} /> : null}
                             <TypeIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
                             <span className="min-w-0 flex-1 truncate">
                               <span className="font-medium">{fileName}</span>
@@ -4847,7 +4878,12 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                                 {filePath}
                               </span>
                             </span>
-                            <span className={cn("shrink-0 text-[10px] font-semibold", commitFileStatusTone(row.file))}>
+                            <span
+                              className={cn(
+                                "shrink-0 text-[10px] font-semibold",
+                                commitFileStatusTone(row.file),
+                              )}
+                            >
                               {commitFileStatusLabel(row.file)}
                             </span>
                           </button>
@@ -4879,9 +4915,7 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                           onContextMenu={(event) => openHistoryCommitContextMenu(event, commit)}
                           onClick={() => selectCommit(commit)}
                         >
-                          {graphRow ? (
-                            <GitGraphSvgCell row={graphRow} />
-                          ) : null}
+                          {graphRow ? <GitGraphSvgCell row={graphRow} /> : null}
                           <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
                             {commit.subject || commit.shortSha}
                           </span>
@@ -4911,7 +4945,10 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                 <div className="flex shrink-0 items-start gap-2 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs">
                   <GitCommitHorizontal className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate font-medium text-foreground" title={commitHistoryTitle(selectedCommit)}>
+                    <div
+                      className="truncate font-medium text-foreground"
+                      title={commitHistoryTitle(selectedCommit)}
+                    >
                       {selectedCommit.subject || selectedCommit.shortSha}
                     </div>
                     <CommitRefTags
@@ -4937,7 +4974,9 @@ export const GitReviewPanel = memo(function GitReviewPanel(props: GitReviewPanel
                         </div>
                         <div
                           className="truncate text-[11px] text-muted-foreground"
-                          title={historyDiffSubtitle || selectedCommitFile?.path || selectedCommit.sha}
+                          title={
+                            historyDiffSubtitle || selectedCommitFile?.path || selectedCommit.sha
+                          }
                         >
                           {historyDiffSubtitle ||
                             `${selectedCommit.shortSha || selectedCommit.sha.slice(0, 7)} - ${selectedCommit.subject}`}

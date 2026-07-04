@@ -27,8 +27,8 @@ import { useLocale } from "../../../i18n";
 import { type ModelOption, parseModelValue } from "../../../lib/providers/llm";
 import {
   type AppSettings,
-  type ProviderId,
   getNextTheme,
+  type ProviderId,
   setSelectedModel,
   type Theme,
 } from "../../../lib/settings";

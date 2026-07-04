@@ -25,20 +25,20 @@ import {
 } from "../../components/ui/select";
 import { Textarea } from "../../components/ui/textarea";
 import { useLocale } from "../../i18n";
-import { useModalMotion } from "../../lib/shared/modalMotion";
 import {
-  canHookHttpMethodHaveBody,
-  HOOK_HTTP_METHODS,
   type ConversationHook,
   type ConversationHookType,
+  canHookHttpMethodHaveBody,
+  HOOK_HTTP_METHODS,
   type HookHttpMethod,
   type HookLifecycleEventType,
 } from "../../lib/settings";
+import { useModalMotion } from "../../lib/shared/modalMotion";
 import {
   createEmptyHookRequestDraft,
   getHookEventLabel,
-  hookRequestToDraft,
   type HookHttpRequestDraft,
+  hookRequestToDraft,
 } from "./hookUtils";
 import { parseHttpRequests } from "./taskConfigUtils";
 
@@ -130,9 +130,7 @@ export function HookModal({ event, initialData, onSave, onClose }: HookModalProp
               <span className="rounded-md bg-muted/60 px-2 py-0.5 font-mono text-[11px] text-muted-foreground">
                 {event}
               </span>
-              <span className="text-xs text-muted-foreground">
-                {getHookEventLabel(t, event)}
-              </span>
+              <span className="text-xs text-muted-foreground">{getHookEventLabel(t, event)}</span>
             </div>
           </div>
           <button
@@ -225,9 +223,7 @@ export function HookModal({ event, initialData, onSave, onClose }: HookModalProp
                 <div className="min-w-0 flex-1">
                   <div
                     className={`text-sm font-semibold ${
-                      type === "command"
-                        ? "text-blue-600 dark:text-blue-400"
-                        : "text-foreground"
+                      type === "command" ? "text-blue-600 dark:text-blue-400" : "text-foreground"
                     }`}
                   >
                     {t("settings.hooksTypeCommand")}
@@ -267,9 +263,7 @@ export function HookModal({ event, initialData, onSave, onClose }: HookModalProp
                 <div className="min-w-0 flex-1">
                   <div
                     className={`text-sm font-semibold ${
-                      type === "http"
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-foreground"
+                      type === "http" ? "text-emerald-600 dark:text-emerald-400" : "text-foreground"
                     }`}
                   >
                     {t("settings.hooksTypeHttp")}
@@ -375,9 +369,7 @@ export function HookModal({ event, initialData, onSave, onClose }: HookModalProp
                             setFormError(null);
                             updateRequest(request.id, {
                               method: value as HookHttpMethod,
-                              bodyText: canHookHttpMethodHaveBody(
-                                value as HookHttpMethod,
-                              )
+                              bodyText: canHookHttpMethodHaveBody(value as HookHttpMethod)
                                 ? request.bodyText
                                 : "",
                             });
@@ -424,9 +416,7 @@ export function HookModal({ event, initialData, onSave, onClose }: HookModalProp
                             type="button"
                             onClick={() => {
                               setFormError(null);
-                              setRequests((prev) =>
-                                prev.filter((item) => item.id !== request.id),
-                              );
+                              setRequests((prev) => prev.filter((item) => item.id !== request.id));
                               if (expandedRequest === request.id) {
                                 setExpandedRequest(null);
                               }

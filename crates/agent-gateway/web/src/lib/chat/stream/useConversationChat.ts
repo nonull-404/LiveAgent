@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { GatewayWebSocketClientLike } from "@/lib/gatewaySocket";
-import type { ActivityStore } from "./activityStore";
-import type { ConversationStreamEvent, ConversationSubscribeResult } from "./streamTypes";
 import type { TranscriptSnapshot, TranscriptStore } from "../transcript/transcriptStore";
 import { createTranscriptStore } from "../transcript/transcriptStore";
+import type { ActivityStore } from "./activityStore";
+import type { ConversationStreamEvent, ConversationSubscribeResult } from "./streamTypes";
 
 // Registry of transcript stores, one per conversation. Stores persist across
 // conversation switches so revisiting a conversation keeps its tail state;

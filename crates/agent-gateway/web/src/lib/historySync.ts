@@ -105,21 +105,14 @@ function mergeConversationSummary(
     cwd: mergeOptionalText(nextConversation.cwd, existing.cwd),
     is_pinned: nextConversation.is_pinned ?? existing.is_pinned,
     is_shared: nextConversation.is_shared ?? existing.is_shared,
-    pinned_at:
-      "pinned_at" in nextConversation ? nextConversation.pinned_at : existing.pinned_at,
+    pinned_at: "pinned_at" in nextConversation ? nextConversation.pinned_at : existing.pinned_at,
   };
 
   return sameConversationSummary(existing, merged) ? existing : merged;
 }
 
-function sameConversationSummaryList(
-  left: ConversationSummary[],
-  right: ConversationSummary[],
-) {
-  return (
-    left.length === right.length &&
-    left.every((item, index) => item === right[index])
-  );
+function sameConversationSummaryList(left: ConversationSummary[], right: ConversationSummary[]) {
+  return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 export function sortConversationSummaries(
@@ -192,18 +185,13 @@ export function reconcileConversationSummaries(
   }
 
   for (const currentConversation of currentConversations) {
-    if (
-      !nextIds.has(currentConversation.id) &&
-      retainConversationIds.has(currentConversation.id)
-    ) {
+    if (!nextIds.has(currentConversation.id) && retainConversationIds.has(currentConversation.id)) {
       mergedConversations.push(currentConversation);
     }
   }
 
   const sorted = sortConversationSummaries(mergedConversations);
-  return sameConversationSummaryList(currentConversations, sorted)
-    ? currentConversations
-    : sorted;
+  return sameConversationSummaryList(currentConversations, sorted) ? currentConversations : sorted;
 }
 
 export function applyGatewayHistoryEvent(

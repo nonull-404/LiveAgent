@@ -1,16 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocale } from "@/i18n";
-import type {
-  RightDockFileTreeState,
-  RightDockFileTreeStatePatch,
-} from "@/lib/settings";
+import type { RightDockFileTreeState, RightDockFileTreeStatePatch } from "@/lib/settings";
 import { cn } from "@/lib/shared/utils";
 import { invokeFs } from "@/lib/tools/fsBackend";
 import { getFileTypeIcon } from "../chat/fileTypeIcons";
-import {
-  isWorkspaceImagePath,
-  isWorkspacePreviewPath,
-} from "../workspace-editor/workspaceImagePreview";
 import {
   Check,
   ChevronRight,
@@ -30,6 +23,10 @@ import {
 import { Button } from "../ui/button";
 import { useConfirmDialog } from "../ui/confirm-dialog";
 import { Input } from "../ui/input";
+import {
+  isWorkspaceImagePath,
+  isWorkspacePreviewPath,
+} from "../workspace-editor/workspaceImagePreview";
 
 type FileTreeKind = "file" | "dir";
 
@@ -230,7 +227,7 @@ export function ProjectFileTreePanel(props: {
       let shouldLoad = true;
       setProjectState((current) => {
         const node = current.nodes[path] ?? (path === ROOT_PATH ? createRootNode(cwd) : null);
-        if (!node || node.kind !== "dir") {
+        if (node?.kind !== "dir") {
           shouldLoad = false;
           return current;
         }

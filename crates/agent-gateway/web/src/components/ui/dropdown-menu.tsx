@@ -1,8 +1,7 @@
-import * as React from "react";
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
-import { Check } from "../icons";
-
+import * as React from "react";
 import { cn } from "../../lib/shared/utils";
+import { Check } from "../icons";
 
 export const DropdownMenu = DropdownMenuPrimitive.Root;
 export const DropdownMenuTrigger = DropdownMenuPrimitive.Trigger;

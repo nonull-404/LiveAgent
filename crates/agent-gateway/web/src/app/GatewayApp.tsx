@@ -1,4 +1,5 @@
 import {
+  type DragEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -6,48 +7,75 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
-  type DragEvent,
 } from "react";
 import { flushSync } from "react-dom";
-import {
-  ChevronDown,
-  PanelRightClose,
-  PanelRightOpen,
-  Terminal,
-} from "@/components/icons";
-
-import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
-import type { HistoryMessageRef } from "@/lib/chat/conversationState";
-import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
-import { mergePendingUploadedFiles } from "@/lib/chat/uploadedFiles";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { RightDockPanel } from "@/components/project-tools/RightDockPanel";
-import { LocaleContext, t as translate } from "@/i18n";
+import { ChatHistorySidebar } from "@/components/chat/ChatHistorySidebar";
 import type {
   MentionComposerDraft,
   MentionComposerHandle,
 } from "@/components/chat/MentionComposer";
-import { ChatHistorySidebar } from "@/components/chat/ChatHistorySidebar";
 import { SharedHistoryManagerModal } from "@/components/chat/SharedHistoryManagerModal";
+import { ChevronDown, PanelRightClose, PanelRightOpen, Terminal } from "@/components/icons";
+import { RightDockPanel } from "@/components/project-tools/RightDockPanel";
+import { Button } from "@/components/ui/button";
 import { useConfirmDialog } from "@/components/ui/confirm-dialog";
-import { ChatComposerBar, type ChatQueueTurnPreview } from "@/pages/chat/ChatComposerBar";
-import { ChatHeader } from "@/pages/chat/ChatHeader";
-import { SkillsHubPage } from "@/pages/skills-hub/SkillsHubPage";
-import { McpHubPage } from "@/pages/mcp-hub/McpHubPage";
-import type { SectionId } from "@/pages/settings/types";
-import { useChatSkills } from "@/pages/chat/useChatSkills";
-import { queuedChatTurnHasContent } from "@/pages/chat/queue/chatTurnQueue";
-import { mergeAlwaysEnabledSkillNames } from "@/lib/skills";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { LocaleContext, t as translate } from "@/i18n";
+import type { ChatHistorySummary } from "@/lib/chat/chatHistory";
 import { buildModelOptions, sortHistoryItems } from "@/lib/chat/chatPageHelpers";
-import { SettingsPage } from "@/pages/SettingsPage";
+import type { HistoryMessageRef } from "@/lib/chat/conversationState";
 import {
+  filterConversationSummariesForScope,
+  historyConversationMatchesFilter,
+} from "@/lib/chat/historyListScope";
+import { createActivityStore } from "@/lib/chat/stream/activityStore";
+import {
+  type ChatCommandOutcome,
+  ChatCommandPipeline,
+  type PendingChatCommand,
+} from "@/lib/chat/stream/chatCommandPipeline";
+import {
+  type ChatCommandUpdate,
+  type ConversationActivityEvent,
+  type ConversationStreamEvent,
+  type ConversationSubscribeResult,
+  readEventRunId,
+} from "@/lib/chat/stream/streamTypes";
+import {
+  createTranscriptStoreRegistry,
+  useConversationChat,
+} from "@/lib/chat/stream/useConversationChat";
+import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
+import { mergePendingUploadedFiles } from "@/lib/chat/uploadedFiles";
+import {
+  buildOptimisticConversationTitle,
+  type ChatEntry,
+  resolveConversationBrowserTitle,
+} from "@/lib/chatUi";
+import type { GatewayChatCommandInput } from "@/lib/gatewaySocket";
+import type {
+  AgentStatus,
+  ChatEvent,
+  ChatQueueItemSummary,
+  ChatQueueSnapshot,
+  ConversationSummary,
+  GatewayHistoryEvent,
+  HistoryDetail,
+  HistoryShareStatus,
+  HistoryWorkdirSummary,
+} from "@/lib/gatewayTypes";
+import { parseHistoryMessagesJsonAsync } from "@/lib/historyParser";
+import { memoryDeleteProject } from "@/lib/memory/api";
+import { toModelValue } from "@/lib/providers/llm";
+import {
+  type ChatRuntimeControls,
+  DEFAULT_WORKSPACE_PROJECT_ID,
   findProviderModelConfig,
   getChatRuntimeReasoningLevelsForProvider,
+  getNextTheme,
   getRightDockFileTreeState,
   getRightDockProjectState,
   getSshProjectHostIds,
-  getNextTheme,
   isAgentDevMode,
   isRightDockSingletonTabOpen,
   normalizeChatRuntimeControlsForProvider,
@@ -55,63 +83,26 @@ import {
   removeRightDockProjectState,
   resolveEffectiveTheme,
   resolveWorkspaceProjects,
-  workspaceProjectPathKey,
   updateChatRuntimeControlsForProvider,
   updateCustomSettings,
   updateRightDockFileTreeState,
   updateRightDockProjectState,
   updateRightDockWidth,
   updateSshProjectHostIds,
-  type AppSettings,
-  type ChatRuntimeControls,
   type WorkspaceProject,
-  DEFAULT_WORKSPACE_PROJECT_ID,
+  workspaceProjectPathKey,
 } from "@/lib/settings";
-import { toModelValue } from "@/lib/providers/llm";
-
+import { mergeAlwaysEnabledSkillNames } from "@/lib/skills";
 import { terminalSessionBelongsToProject } from "@/lib/terminal/sessionStore";
 import type { TerminalSession } from "@/lib/terminal/types";
-import type {
-  AgentStatus,
-  ChatQueueItemSummary,
-  ChatQueueSnapshot,
-  ChatEvent,
-  ConversationSummary,
-  GatewayHistoryEvent,
-  HistoryDetail,
-  HistoryShareStatus,
-  HistoryWorkdirSummary,
-} from "@/lib/gatewayTypes";
-import {
-  filterConversationSummariesForScope,
-  historyConversationMatchesFilter,
-} from "@/lib/chat/historyListScope";
-import {
-  buildOptimisticConversationTitle,
-  resolveConversationBrowserTitle,
-  type ChatEntry,
-} from "@/lib/chatUi";
-import { parseHistoryMessagesJsonAsync } from "@/lib/historyParser";
-import { createActivityStore } from "@/lib/chat/stream/activityStore";
-import {
-  ChatCommandPipeline,
-  type ChatCommandOutcome,
-  type PendingChatCommand,
-} from "@/lib/chat/stream/chatCommandPipeline";
-import {
-  readEventRunId,
-  type ChatCommandUpdate,
-  type ConversationActivityEvent,
-  type ConversationStreamEvent,
-  type ConversationSubscribeResult,
-} from "@/lib/chat/stream/streamTypes";
-import {
-  createTranscriptStoreRegistry,
-  useConversationChat,
-} from "@/lib/chat/stream/useConversationChat";
-import type { GatewayChatCommandInput } from "@/lib/gatewaySocket";
-
-import { memoryDeleteProject } from "@/lib/memory/api";
+import { ChatComposerBar, type ChatQueueTurnPreview } from "@/pages/chat/ChatComposerBar";
+import { ChatHeader } from "@/pages/chat/ChatHeader";
+import { queuedChatTurnHasContent } from "@/pages/chat/queue/chatTurnQueue";
+import { useChatSkills } from "@/pages/chat/useChatSkills";
+import { McpHubPage } from "@/pages/mcp-hub/McpHubPage";
+import { SettingsPage } from "@/pages/SettingsPage";
+import type { SectionId } from "@/pages/settings/types";
+import { SkillsHubPage } from "@/pages/skills-hub/SkillsHubPage";
 
 const LOCAL_DRAFT_PREFIX = "__local_draft__:";
 function createLocalDraftConversationId() {
@@ -120,19 +111,16 @@ function createLocalDraftConversationId() {
 function isLocalDraftConversationId(id: string) {
   return id.trim().startsWith(LOCAL_DRAFT_PREFIX);
 }
+
+import { HistoryShareModal } from "@/components/chat/HistoryShareModal";
+import { GatewayTranscript } from "@/components/GatewayTranscript";
+import { useGatewayScrollAffordance } from "@/components/useGatewayScrollAffordance";
+import { parseHistoryShareToken } from "@/lib/historyShare";
 import {
   applyGatewayHistoryEvent,
   reconcileConversationSummaries,
   upsertConversationSummary,
 } from "@/lib/historySync";
-import { parseHistoryShareToken } from "@/lib/historyShare";
-import { GatewayTranscript } from "@/components/GatewayTranscript";
-import { HistoryShareModal } from "@/components/chat/HistoryShareModal";
-import { useGatewayScrollAffordance } from "@/components/useGatewayScrollAffordance";
-import { LoginPage } from "@/pages/LoginPage";
-import { SettingsSyncLoading } from "@/pages/SettingsSyncLoading";
-import { SharedHistoryPage } from "@/pages/SharedHistoryPage";
-import { WorkdirPickerModal } from "@/pages/settings/WorkdirPickerModal";
 import {
   applyWorkspaceProjectConversationActivityMap,
   buildWorkspaceProjectActivityUpdatedAts,
@@ -141,6 +129,21 @@ import {
   mergeWorkspaceProjectsWithHistory,
   workspaceProjectActivityUpdatedAtsEqual,
 } from "@/lib/workspaceProjects";
+import { LoginPage } from "@/pages/LoginPage";
+import { SettingsSyncLoading } from "@/pages/SettingsSyncLoading";
+import { SharedHistoryPage } from "@/pages/SharedHistoryPage";
+import { WorkdirPickerModal } from "@/pages/settings/WorkdirPickerModal";
+import { buildTextFromComposerDraft, importPastedTextsAsFiles } from "./chatDraft";
+import {
+  asErrorMessage,
+  buildGatewaySelectedModel,
+  buildGatewaySystemSettings,
+  isAbortError,
+  isChatEventTitleFinal,
+  readChatEventTitle,
+  readTunnelManagerToolChange,
+  waitForMinimumHistoryListLoading,
+} from "./chatEventUtils";
 import {
   CHAT_RUNTIME_FOREGROUND_PREPARE_TIMEOUT_MS,
   CHAT_RUNTIME_KEEP_WARM_INTERVAL_MS,
@@ -160,24 +163,8 @@ import {
   SHARED_HISTORY_LIST_PAGE_SIZE,
   SKILLS_HUB_BROWSER_TITLE,
 } from "./constants";
-import {
-  buildGatewaySelectedModel,
-  buildGatewaySystemSettings,
-  asErrorMessage,
-  isAbortError,
-  isChatEventTitleFinal,
-  readChatEventTitle,
-  readTunnelManagerToolChange,
-  waitForMinimumHistoryListLoading,
-} from "./chatEventUtils";
-import {
-  buildTextFromComposerDraft,
-  importPastedTextsAsFiles,
-} from "./chatDraft";
 import { FileDropOverlay } from "./FileDropOverlay";
 import { HistorySwitchLoadingOverlay } from "./HistorySwitchLoadingOverlay";
-import { UserMenu } from "./UserMenu";
-import { WorkspaceOverlayHost } from "./WorkspaceOverlayHost";
 import {
   createWorkspaceProjectFromPath,
   formatTranslation,
@@ -190,6 +177,11 @@ import {
   shouldOpenSidebarByDefault,
   toChatHistorySummary,
 } from "./historyUtils";
+import { useGatewayClients } from "./hooks/useGatewayClients";
+import { useGatewaySession } from "./hooks/useGatewaySession";
+import { useGatewaySettingsSync } from "./hooks/useGatewaySettingsSync";
+import { usePendingUploads } from "./hooks/usePendingUploads";
+import { useProjectToolsRuntime } from "./hooks/useProjectToolsRuntime";
 import type {
   ModelProviderSource,
   OverlayState,
@@ -197,11 +189,8 @@ import type {
   SendChatFn,
   SendChatOptions,
 } from "./types";
-import { useGatewayClients } from "./hooks/useGatewayClients";
-import { useGatewaySession } from "./hooks/useGatewaySession";
-import { useGatewaySettingsSync } from "./hooks/useGatewaySettingsSync";
-import { usePendingUploads } from "./hooks/usePendingUploads";
-import { useProjectToolsRuntime } from "./hooks/useProjectToolsRuntime";
+import { UserMenu } from "./UserMenu";
+import { WorkspaceOverlayHost } from "./WorkspaceOverlayHost";
 
 // history.list `running_conversations` items → activity store hydration shape.
 function normalizeActivityHydrationItems(items: readonly unknown[] | undefined) {
@@ -283,13 +272,8 @@ export default function GatewayApp() {
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SectionId>("system");
   const [overlay, setOverlay] = useState<OverlayState>("closed");
-  const {
-    settings,
-    setSettings,
-    settingsSyncReady,
-    settingsSyncError,
-    settingsSaveState,
-  } = useGatewaySettingsSync({ token, api });
+  const { settings, setSettings, settingsSyncReady, settingsSyncError, settingsSaveState } =
+    useGatewaySettingsSync({ token, api });
   const effectiveTheme = resolveEffectiveTheme(settings.theme);
   const isAgentMode = settings.system.executionMode !== "text";
   const workspaceProjects = useMemo(
@@ -421,9 +405,9 @@ export default function GatewayApp() {
     [],
   );
   const activityStore = useMemo(() => createActivityStore(), []);
-  const pipelineOnBoundRef = useRef<(update: ChatCommandUpdate, pending: PendingChatCommand) => void>(
-    () => undefined,
-  );
+  const pipelineOnBoundRef = useRef<
+    (update: ChatCommandUpdate, pending: PendingChatCommand) => void
+  >(() => undefined);
   const pipelineOnQueuedInGuiRef = useRef<
     (update: ChatCommandUpdate, pending: PendingChatCommand) => void
   >(() => undefined);
@@ -804,11 +788,7 @@ export default function GatewayApp() {
   // Only runs while the conversation is idle; a run started mid-fetch aborts
   // the merge so a stale snapshot can never truncate freshly folded entries.
   const refreshDisplayedConversationHistorySnapshot = useCallback(
-    async (
-      targetConversationId: string,
-      currentApi = api,
-      options?: { forceFull?: boolean },
-    ) => {
+    async (targetConversationId: string, currentApi = api, options?: { forceFull?: boolean }) => {
       const conversationIdValue = targetConversationId.trim();
       if (!currentApi || !conversationIdValue || isLocalDraftConversationId(conversationIdValue)) {
         return;
@@ -866,7 +846,6 @@ export default function GatewayApp() {
     },
     [api, getConversationTranscriptEntryCount, isConversationBusy, transcriptStoreRegistry],
   );
-
 
   const markVisibleConversationRevision = useCallback(() => {
     visibleConversationRevisionRef.current += 1;
@@ -971,7 +950,6 @@ export default function GatewayApp() {
       updateHistoryItems,
     ],
   );
-
 
   const ensureTunnelToolTab = useCallback(
     (projectPathKey?: string) => {
@@ -1775,7 +1753,6 @@ export default function GatewayApp() {
     updateHistoryItems,
   ]);
 
-
   async function selectHistory(
     conversationIdValue: string,
     currentApi = api,
@@ -1863,7 +1840,6 @@ export default function GatewayApp() {
     }
   }
 
-
   async function reloadHistory(currentApi = api, options?: ReloadHistoryOptions) {
     if (!currentApi) {
       return;
@@ -1886,9 +1862,7 @@ export default function GatewayApp() {
       // dots) and project activity bookkeeping. Conversations with an
       // in-flight local command are kept — the gateway may not have
       // registered their run when the snapshot was built.
-      const runningConversations = normalizeActivityHydrationItems(
-        response.running_conversations,
-      );
+      const runningConversations = normalizeActivityHydrationItems(response.running_conversations);
       activityStore.hydrate(runningConversations, {
         keepConversationIds: chatCommandPipeline.pendingConversationIds(),
       });
@@ -2052,7 +2026,6 @@ export default function GatewayApp() {
     }
   }
 
-
   const loadMoreHistory = useCallback(async () => {
     if (!api || historyListPageLoadingRef.current || !historyHasMoreRef.current) {
       return;
@@ -2068,9 +2041,7 @@ export default function GatewayApp() {
       if (requestScopeKey !== historyScopeKeyRef.current) {
         return;
       }
-      const runningConversations = normalizeActivityHydrationItems(
-        response.running_conversations,
-      );
+      const runningConversations = normalizeActivityHydrationItems(response.running_conversations);
       activityStore.hydrate(runningConversations, {
         keepConversationIds: chatCommandPipeline.pendingConversationIds(),
       });
@@ -2212,11 +2183,9 @@ export default function GatewayApp() {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      void prepareChatRuntime(
-        "foreground",
-        api,
-        CHAT_RUNTIME_FOREGROUND_PREPARE_TIMEOUT_MS,
-      ).catch(() => undefined);
+      void prepareChatRuntime("foreground", api, CHAT_RUNTIME_FOREGROUND_PREPARE_TIMEOUT_MS).catch(
+        () => undefined,
+      );
     };
 
     const handleVisibilityChange = () => {
@@ -2239,24 +2208,18 @@ export default function GatewayApp() {
     };
   }, [api, historyShareToken, prepareChatRuntime, status?.online]);
 
-
   useEffect(() => {
     if (!api || historyShareToken || status?.online !== true) {
       return;
     }
 
     const keepWarm = () => {
-      if (
-        typeof document !== "undefined" &&
-        document.visibilityState === "hidden"
-      ) {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") {
         return;
       }
-      void prepareChatRuntime(
-        "keep-warm",
-        api,
-        CHAT_RUNTIME_FOREGROUND_PREPARE_TIMEOUT_MS,
-      ).catch(() => undefined);
+      void prepareChatRuntime("keep-warm", api, CHAT_RUNTIME_FOREGROUND_PREPARE_TIMEOUT_MS).catch(
+        () => undefined,
+      );
     };
 
     keepWarm();
@@ -2403,11 +2366,7 @@ export default function GatewayApp() {
 
   async function cancelChat(targetConversationId?: string) {
     const activeConversationId = targetConversationId?.trim() || getDisplayedConversationId();
-    if (
-      !api ||
-      !activeConversationId ||
-      isLocalDraftConversationId(activeConversationId)
-    ) {
+    if (!api || !activeConversationId || isLocalDraftConversationId(activeConversationId)) {
       return;
     }
     // No local terminal marking: the stream's run_finished settles the UI
@@ -2425,7 +2384,6 @@ export default function GatewayApp() {
       }
     }
   }
-
 
   async function materializeComposerDraftForSend(
     draft: MentionComposerDraft,
@@ -2486,7 +2444,11 @@ export default function GatewayApp() {
       settings.system.workdir
     ).trim();
     try {
-      const materialized = await materializeComposerDraftForSend(draft, uploadedFiles, workdirForTurn);
+      const materialized = await materializeComposerDraftForSend(
+        draft,
+        uploadedFiles,
+        workdirForTurn,
+      );
       if (!materialized.text && materialized.uploadedFiles.length === 0) {
         return false;
       }
@@ -2533,7 +2495,9 @@ export default function GatewayApp() {
           if (!composerRef.current?.hasContent()) {
             composerRef.current?.setDraft(draft);
           }
-          if ((pendingUploadsByConversationRef.current.get(conversationIdValue) ?? []).length === 0) {
+          if (
+            (pendingUploadsByConversationRef.current.get(conversationIdValue) ?? []).length === 0
+          ) {
             setPendingUploadsForConversation(conversationIdValue, uploadedFiles);
           }
         }
@@ -2552,15 +2516,10 @@ export default function GatewayApp() {
           setPendingUploadsForConversation(conversationIdValue, uploadedFiles);
         }
       }
-      reportChatQueueActionError(
-        conversationIdValue,
-        error,
-        "queued chat request failed",
-      );
+      reportChatQueueActionError(conversationIdValue, error, "queued chat request failed");
       return false;
     }
   }
-
 
   async function commitQueuedChatEdit() {
     const session = queuedChatEditSessionRef.current;
@@ -2599,11 +2558,7 @@ export default function GatewayApp() {
     }
   }
 
-  function reportChatQueueActionError(
-    conversationId: string,
-    error: unknown,
-    fallback: string,
-  ) {
+  function reportChatQueueActionError(conversationId: string, error: unknown, fallback: string) {
     const key = conversationId.trim();
     if (!key) return;
     if (isDisplayedConversation(key)) {
@@ -2674,9 +2629,7 @@ export default function GatewayApp() {
           return;
         }
         const draft = JSON.parse(response.item.draftJson) as MentionComposerDraft;
-        const uploadedFiles = JSON.parse(
-          response.item.uploadedFilesJson,
-        ) as PendingUploadedFile[];
+        const uploadedFiles = JSON.parse(response.item.uploadedFilesJson) as PendingUploadedFile[];
         queuedChatEditSessionRef.current = {
           itemId: response.item.id,
           revision: response.snapshot?.revision ?? chatQueueRevisionRef.current,
@@ -3427,7 +3380,6 @@ export default function GatewayApp() {
     [api, isConversationBusy, setPendingUploadsForConversation],
   );
 
-
   const handleLoadUploadedImagePreview = useCallback(
     async (workspaceRoot: string, absolutePath: string) => {
       if (!api) {
@@ -3687,12 +3639,7 @@ export default function GatewayApp() {
       }
     }
     return updatedAts;
-  }, [
-    activitySnapshot,
-    historyItems,
-    historyWorkdirs,
-    projectActivityUpdatedAtOverrides,
-  ]);
+  }, [activitySnapshot, historyItems, historyWorkdirs, projectActivityUpdatedAtOverrides]);
   const currentConversationPersistedCwd =
     historyItems.find((item) => item.id === displayedConversationId)?.cwd?.trim() || "";
   const currentConversationRuntimeWorkdir =
@@ -3900,10 +3847,8 @@ export default function GatewayApp() {
   // Row count gates everything visual (empty state, error banner, loading
   // screen): entryCount can be non-zero while nothing renders (meta-only
   // entries), and hiding an error behind an invisible entry would strand it.
-  const displayedTranscriptRowCount =
-    transcriptFoldedRows.length + transcriptLiveRows.length;
-  const transcriptHistoryLoading =
-    historyDetailLoading && displayedTranscriptRowCount === 0;
+  const displayedTranscriptRowCount = transcriptFoldedRows.length + transcriptLiveRows.length;
+  const transcriptHistoryLoading = historyDetailLoading && displayedTranscriptRowCount === 0;
   const selectedHistoryHasMore =
     selectedHistory?.conversation_id === displayedConversationId &&
     selectedHistory.has_more === true;
@@ -4686,7 +4631,9 @@ export default function GatewayApp() {
               setSettings((prev) => updateRightDockWidth(prev, nextWidth))
             }
             onProjectStateChange={(updater) =>
-              setSettings((prev) => updateRightDockProjectState(prev, terminalProjectPathKey, updater))
+              setSettings((prev) =>
+                updateRightDockProjectState(prev, terminalProjectPathKey, updater),
+              )
             }
             onFileTreeStateChange={(patch) =>
               setSettings((prev) =>

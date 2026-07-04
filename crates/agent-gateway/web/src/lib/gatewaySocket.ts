@@ -1,28 +1,17 @@
+import type { HistoryMessageRef } from "@/lib/chat/conversationState";
+import { ConversationStreamClient } from "@/lib/chat/stream/conversationStreamClient";
+import type {
+  ChatCommandAccepted,
+  ChatCommandUpdate,
+  ConversationActivityEvent,
+  ConversationStreamHandlers,
+} from "@/lib/chat/stream/streamTypes";
+import { normalizeActivityEvent, normalizeCommandUpdate } from "@/lib/chat/stream/streamTypes";
+import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
 import type {
   GatewaySettingsSyncPayload,
   GatewaySettingsSyncUpdatePayload,
 } from "@/lib/settings/sync";
-import type { HistoryMessageRef } from "@/lib/chat/conversationState";
-import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
-
-import type {
-  SshTerminalTab,
-  SshTerminalTabKind,
-  SshTerminalTabsSnapshot,
-  TerminalEvent,
-  TerminalSession,
-  TerminalShellOptions,
-  TerminalSnapshot,
-  TerminalStreamChunk,
-  TerminalStreamClient,
-  TerminalStreamHandle,
-  TerminalStreamInputState,
-  TerminalStreamSnapshot,
-  TerminalSshCreateResult,
-  TerminalSshLatency,
-  TerminalSshMetadata,
-  TerminalSshPrompt,
-} from "@/lib/terminal/types";
 import type {
   SftpActionResponse,
   SftpEntry,
@@ -33,19 +22,39 @@ import type {
   SftpTransferResponse,
 } from "@/lib/sftp/types";
 import { BrowserGatewayTerminalStreamClient } from "@/lib/terminal/gatewayTerminalStreamClient";
-
+import type {
+  SshTerminalTab,
+  SshTerminalTabKind,
+  SshTerminalTabsSnapshot,
+  TerminalEvent,
+  TerminalSession,
+  TerminalShellOptions,
+  TerminalSnapshot,
+  TerminalSshCreateResult,
+  TerminalSshLatency,
+  TerminalSshMetadata,
+  TerminalSshPrompt,
+  TerminalStreamClient,
+} from "@/lib/terminal/types";
+import type {
+  TunnelCreateInput,
+  TunnelHealth,
+  TunnelStateSnapshot,
+  TunnelStatus,
+  TunnelUpdateInput,
+} from "@/lib/tunnels/constants";
 import type {
   AgentStatus,
   ChatQueueResponse,
   ChatQueueSnapshot,
   ConversationSummary,
-  GatewayHistoryEvent,
+  CreateProjectFolderResponse,
   CronManagePayload,
   CronManageResponse,
   GatewayChatRuntimeControls,
+  GatewayHistoryEvent,
   GatewayProviderSummary,
   GatewaySelectedModel,
-  CreateProjectFolderResponse,
   HistoryDetail,
   HistoryList,
   HistoryListFilter,
@@ -54,24 +63,6 @@ import type {
   MemoryManagePayload,
   RunningConversationSummary,
 } from "./gatewayTypes";
-import type {
-  TunnelCreateInput,
-  TunnelHealth,
-  TunnelStateSnapshot,
-  TunnelStatus,
-  TunnelUpdateInput,
-} from "@/lib/tunnels/constants";
-import { ConversationStreamClient } from "@/lib/chat/stream/conversationStreamClient";
-import type {
-  ChatCommandAccepted,
-  ChatCommandUpdate,
-  ConversationActivityEvent,
-  ConversationStreamHandlers,
-} from "@/lib/chat/stream/streamTypes";
-import {
-  normalizeActivityEvent,
-  normalizeCommandUpdate,
-} from "@/lib/chat/stream/streamTypes";
 
 type GatewaySocketEnvelope = {
   id?: string;
@@ -847,7 +838,9 @@ function normalizeTerminalSnapshot(input: RawTerminalResponse): TerminalSnapshot
 function normalizeTerminalBytes(value: unknown, fallbackText?: string): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+    return new Uint8Array(
+      value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength),
+    );
   }
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (Array.isArray(value)) return Uint8Array.from(value.map((item) => Number(item) & 0xff));
@@ -930,7 +923,11 @@ function normalizeTerminalEvent(input: RawTerminalEvent): TerminalEvent | null {
     kind: input.kind ?? "",
     sessionId: input.sessionId ?? input.session_id ?? session?.id,
     projectPathKey:
-      input.projectPathKey ?? input.project_path_key ?? session?.projectPathKey ?? sshTabs?.projectPathKey ?? "",
+      input.projectPathKey ??
+      input.project_path_key ??
+      session?.projectPathKey ??
+      sshTabs?.projectPathKey ??
+      "",
     session,
     outputStartOffset,
     outputEndOffset,
@@ -938,10 +935,7 @@ function normalizeTerminalEvent(input: RawTerminalEvent): TerminalEvent | null {
   };
 }
 
-function applyTerminalSnapshotEvent(
-  snapshot: Map<string, TerminalSession>,
-  event: TerminalEvent,
-) {
+function applyTerminalSnapshotEvent(snapshot: Map<string, TerminalSession>, event: TerminalEvent) {
   if (event.kind === "output") return;
 
   const sessionId = (event.sessionId || event.session?.id || "").trim();
@@ -1865,11 +1859,16 @@ export class GatewayWebSocketClient {
   async updateSettings(payload: GatewaySettingsSyncUpdatePayload): Promise<void> {
     const response = await this.request<GatewaySettingsUpdateResponse>("settings.update", payload);
     if (response?.accepted === false) {
-      throw new Error(response.message?.trim() || "SSH 设置已在另一端更新，已刷新为最新状态，请重新提交。");
+      throw new Error(
+        response.message?.trim() || "SSH 设置已在另一端更新，已刷新为最新状态，请重新提交。",
+      );
     }
   }
 
-  async resetSshKnownHost(params: { host: string; port: number }): Promise<SshKnownHostResetResult> {
+  async resetSshKnownHost(params: {
+    host: string;
+    port: number;
+  }): Promise<SshKnownHostResetResult> {
     return this.request<SshKnownHostResetResult>("settings.ssh_known_host.reset", {
       host: params.host,
       port: params.port,

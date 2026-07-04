@@ -357,10 +357,7 @@ export function XTermViewport({
     const scheduleSnapshotRetry = () => {
       if (disposed || streamHandle || snapshotRetryTimer !== null) return;
       const delay = snapshotRetryDelayMs;
-      snapshotRetryDelayMs = Math.min(
-        snapshotRetryDelayMs * 2,
-        SNAPSHOT_ATTACH_RETRY_MAX_MS,
-      );
+      snapshotRetryDelayMs = Math.min(snapshotRetryDelayMs * 2, SNAPSHOT_ATTACH_RETRY_MAX_MS);
       snapshotRetryTimer = window.setTimeout(() => {
         snapshotRetryTimer = null;
         loadSnapshot();
@@ -501,7 +498,10 @@ function terminalSnapshotEndOffset(snapshot: TerminalSnapshot) {
     snapshot.outputStartOffset >= 0
       ? snapshot.outputStartOffset
       : 0;
-  return startOffset + (snapshot.outputBytes?.byteLength ?? new TextEncoder().encode(snapshot.output).byteLength);
+  return (
+    startOffset +
+    (snapshot.outputBytes?.byteLength ?? new TextEncoder().encode(snapshot.output).byteLength)
+  );
 }
 
 function writeTerminalChunk(

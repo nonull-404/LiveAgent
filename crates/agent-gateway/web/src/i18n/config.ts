@@ -262,19 +262,23 @@ export const translations: Record<Locale, Record<string, string>> = {
     "projectTools.sshTunnelConfiguredHosts": "已关联 {count} 台 SSH 主机",
     "projectTools.sshTunnelNoProject": "选择项目后可关联 SSH 主机",
     "projectTools.sshTunnelProjectEmpty": "当前项目暂无 SSH 连接",
-    "projectTools.sshTunnelProjectEmptyHint": "先关联设置中已配置的 SSH 主机，然后在这里启动交互式终端。",
+    "projectTools.sshTunnelProjectEmptyHint":
+      "先关联设置中已配置的 SSH 主机，然后在这里启动交互式终端。",
     "projectTools.sshTunnelProjectEmptyWithHosts": "选择已关联主机即可启动 SSH 终端。",
     "projectTools.sshTunnelAllEmpty": "暂无 SSH 连接",
     "projectTools.sshTunnelAllEmptyHint": "当前没有运行中的 SSH 终端。",
     "projectTools.sshTunnelAssociateHosts": "关联 SSH 主机",
-    "projectTools.sshTunnelAssociateHostsHint": "从 Settings > SSH 已配置主机中选择当前项目可用的主机",
+    "projectTools.sshTunnelAssociateHostsHint":
+      "从 Settings > SSH 已配置主机中选择当前项目可用的主机",
     "projectTools.sshTunnelAssociatedCount": "已关联",
     "projectTools.sshTunnelNoConfiguredHosts": "还没有配置 SSH 主机",
-    "projectTools.sshTunnelNoConfiguredHostsHint": "请先到 Settings > SSH 添加或导入主机，再回到这里关联当前项目。",
+    "projectTools.sshTunnelNoConfiguredHostsHint":
+      "请先到 Settings > SSH 添加或导入主机，再回到这里关联当前项目。",
     "projectTools.sshTunnelCreateTitle": "新建 SSH 连接",
     "projectTools.sshTunnelCreateHint": "选择主机并打开交互式 SSH 终端。",
     "projectTools.sshTunnelCreateNoAssociatedHosts": "当前项目还没有关联 SSH 主机",
-    "projectTools.sshTunnelCreateNoAssociatedHostsHint": "先关联 Settings > SSH 中的主机，再从这里新建 SSH 连接。",
+    "projectTools.sshTunnelCreateNoAssociatedHostsHint":
+      "先关联 Settings > SSH 中的主机，再从这里新建 SSH 连接。",
     "projectTools.sshTunnelHost": "SSH 主机",
     "projectTools.sshTunnelSftpEnabled": "SFTP功能",
     "projectTools.sshTunnelNote": "备注",
@@ -596,7 +600,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "workspaceSftp.confirmDeleteFile": "确认删除文件",
     "workspaceSftp.confirmDeleteFileSubtitle": "此文件会被删除，操作无法撤销。",
     "workspaceSftp.confirmDeleteDirectory": "确认递归删除目录",
-    "workspaceSftp.confirmDeleteDirectorySubtitle": "此目录及其所有内容会被递归删除，操作无法撤销。",
+    "workspaceSftp.confirmDeleteDirectorySubtitle":
+      "此目录及其所有内容会被递归删除，操作无法撤销。",
     "workspaceSftp.deleteConfirm": "删除",
     "workspaceSftp.cancel": "取消",
     "workspaceSftp.disconnected": "SSH 连接未连接",
@@ -1198,7 +1203,8 @@ export const translations: Record<Locale, Record<string, string>> = {
       "由桌面端 Remote 设置控制。开启后，已登录 WebUI 可为 localhost 或 IP 地址 HTTP 服务创建和关闭临时访问链接。",
     "settings.remoteHeartbeat": "心跳间隔",
     "settings.remoteHeartbeatUnit": "秒",
-    "settings.remoteHeartbeatHint": "与 Gateway 连接的保活心跳间隔（生效范围 10-60 秒），用于维持连接和检测在线状态",
+    "settings.remoteHeartbeatHint":
+      "与 Gateway 连接的保活心跳间隔（生效范围 10-60 秒），用于维持连接和检测在线状态",
     "settings.remoteInfoBanner":
       "启用后，本地 LiveAgent 将通过 gRPC 双向流连接云端 Gateway。你可以在浏览器中通过 WebUI 远程发送 Chat 消息、管理 Cron 任务和查看历史记录。所有工具执行仍在本地完成，远程端仅转发指令和结果。",
 
@@ -1726,7 +1732,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     "projectTools.tunnelDescription": "Expose HTTP services through Gateway",
     "projectTools.sshTunnelTitle": "SSH Tunnel",
     "projectTools.newSshTunnel": "New SSH Connection",
-    "projectTools.sshTunnelDescription": "Start interactive SSH terminals and associate project hosts",
+    "projectTools.sshTunnelDescription":
+      "Start interactive SSH terminals and associate project hosts",
     "projectTools.sshTunnelSettings": "SSH host settings",
     "projectTools.sshTunnelBack": "Back to SSH",
     "projectTools.sshTunnelScopeGroup": "Switch SSH tunnel scope",
@@ -1764,8 +1771,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "projectTools.sshTunnelConnecting": "Connecting",
     "projectTools.sshTunnelTabTitle": "Tab title",
     "projectTools.sshTunnelTabTitlePlaceholder": "Defaults to the host name",
-    "projectTools.sshTunnelProxyUnsupported":
-      "This host is configured to connect through a proxy.",
+    "projectTools.sshTunnelProxyUnsupported": "This host is configured to connect through a proxy.",
     "projectTools.sshTunnelMissingSecret": "This host is missing saved authentication material.",
     "projectTools.sshTunnelRunningCount": "{count} SSH connections running",
     "projectTools.sshTunnelConnectionCount": "{count} SSH connections, {connected} connected",
@@ -1850,8 +1856,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "projectTools.tunnelHealthOk": "OK",
     "projectTools.tunnelHealthFailed": "Failed",
     "projectTools.tunnelHealthUnknown": "Unknown",
-    "projectTools.tunnelGatewayUnsupported":
-      "The gateway is outdated; upgrade it to use tunnels",
+    "projectTools.tunnelGatewayUnsupported": "The gateway is outdated; upgrade it to use tunnels",
     "projectTools.tunnelKeepCurrentTtl": "Keep current expiry",
     "projectTools.tunnelCheckAction": "Check",
     "projectTools.tunnelClose": "Delete link",
@@ -2079,16 +2084,19 @@ export const translations: Record<Locale, Record<string, string>> = {
     "workspaceSftp.drop.upload": "Upload to remote",
     "workspaceSftp.drop.download": "Download to local",
     "workspaceSftp.confirmOverwrite": "Confirm overwrite",
-    "workspaceSftp.confirmOverwriteSubtitle": "The target path already exists. Continuing will overwrite existing content.",
+    "workspaceSftp.confirmOverwriteSubtitle":
+      "The target path already exists. Continuing will overwrite existing content.",
     "workspaceSftp.overwrite": "Overwrite",
     "workspaceSftp.confirmDeleteFile": "Confirm file deletion",
     "workspaceSftp.confirmDeleteFileSubtitle": "This file will be deleted. This cannot be undone.",
     "workspaceSftp.confirmDeleteDirectory": "Confirm recursive directory deletion",
-    "workspaceSftp.confirmDeleteDirectorySubtitle": "This directory and all of its contents will be deleted recursively. This cannot be undone.",
+    "workspaceSftp.confirmDeleteDirectorySubtitle":
+      "This directory and all of its contents will be deleted recursively. This cannot be undone.",
     "workspaceSftp.deleteConfirm": "Delete",
     "workspaceSftp.cancel": "Cancel",
     "workspaceSftp.disconnected": "SSH connection is not connected",
-    "workspaceSftp.disconnectedHint": "SFTP requires the SSH session to stay connected. Reconnect and try again.",
+    "workspaceSftp.disconnectedHint":
+      "SFTP requires the SSH session to stay connected. Reconnect and try again.",
     "workspaceSftp.transfer.idle": "No transfer",
     "workspaceSftp.transfer.queued": "Queued",
     "workspaceSftp.transfer.running": "Transferring",

@@ -1,23 +1,22 @@
-import { memo, useLayoutEffect, useRef, type ComponentProps } from "react";
-import { createPortal } from "react-dom";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
 import { math } from "@streamdown/math";
 import { mermaid } from "@streamdown/mermaid";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Copy, ExternalLink, X } from "./icons";
+import { type ComponentProps, memo, useLayoutEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+import remarkBreaks from "remark-breaks";
 import {
-  Streamdown,
-  defaultRemarkPlugins,
   type Components,
+  defaultRemarkPlugins,
   type ExtraProps,
   type LinkSafetyModalProps,
+  Streamdown,
   type StreamdownTranslations,
 } from "streamdown";
-import remarkBreaks from "remark-breaks";
-
-import { Button } from "./ui/button";
 import { cn } from "../lib/shared/utils";
+import { Copy, ExternalLink, X } from "./icons";
+import { Button } from "./ui/button";
 
 type MarkdownProps = {
   content: string;
@@ -75,10 +74,7 @@ function MarkdownReadOnlyLink(props: MarkdownAnchorFallbackProps) {
         ? href.trim()
         : undefined;
   return (
-    <span
-      className="text-primary underline decoration-primary/35 underline-offset-4"
-      title={label}
-    >
+    <span className="text-primary underline decoration-primary/35 underline-offset-4" title={label}>
       {children}
     </span>
   );
@@ -201,12 +197,7 @@ const streamdownTranslations = {
   viewFullscreen: "全屏查看",
 } satisfies Partial<StreamdownTranslations>;
 
-function ExternalLinkModal({
-  isOpen,
-  onClose,
-  onConfirm,
-  url,
-}: LinkSafetyModalProps) {
+function ExternalLinkModal({ isOpen, onClose, onConfirm, url }: LinkSafetyModalProps) {
   if (!isOpen) {
     return null;
   }

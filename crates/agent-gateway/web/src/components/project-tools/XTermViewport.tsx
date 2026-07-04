@@ -2,7 +2,7 @@ import "@xterm/xterm/css/xterm.css";
 
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
-import { useEffect, useRef, type CSSProperties } from "react";
+import { type CSSProperties, useEffect, useRef } from "react";
 import { cn } from "@/lib/shared/utils";
 import type {
   TerminalClient,
@@ -357,10 +357,7 @@ export function XTermViewport({
     const scheduleSnapshotRetry = () => {
       if (disposed || streamHandle || snapshotRetryTimer !== null) return;
       const delay = snapshotRetryDelayMs;
-      snapshotRetryDelayMs = Math.min(
-        snapshotRetryDelayMs * 2,
-        SNAPSHOT_ATTACH_RETRY_MAX_MS,
-      );
+      snapshotRetryDelayMs = Math.min(snapshotRetryDelayMs * 2, SNAPSHOT_ATTACH_RETRY_MAX_MS);
       snapshotRetryTimer = window.setTimeout(() => {
         snapshotRetryTimer = null;
         loadSnapshot();
@@ -471,10 +468,7 @@ export function XTermViewport({
     <div
       ref={containerRef}
       style={viewportStyle}
-      className={cn(
-        "project-terminal-viewport h-full min-h-0 w-full overflow-hidden",
-        className,
-      )}
+      className={cn("project-terminal-viewport h-full min-h-0 w-full overflow-hidden", className)}
     />
   );
 }
@@ -503,7 +497,10 @@ function terminalSnapshotEndOffset(snapshot: TerminalSnapshot) {
     snapshot.outputStartOffset >= 0
       ? snapshot.outputStartOffset
       : 0;
-  return startOffset + (snapshot.outputBytes?.byteLength ?? new TextEncoder().encode(snapshot.output).byteLength);
+  return (
+    startOffset +
+    (snapshot.outputBytes?.byteLength ?? new TextEncoder().encode(snapshot.output).byteLength)
+  );
 }
 
 function writeTerminalChunk(

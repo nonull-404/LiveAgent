@@ -1,7 +1,7 @@
-import type { ChatEntry, GatewayTranscriptRound } from "@/lib/chatUi";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
-import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
 import type { StreamRunActivity } from "@/lib/chat/stream/streamTypes";
+import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
+import type { ChatEntry, GatewayTranscriptRound } from "@/lib/chatUi";
 
 export type UserChatEntry = Extract<ChatEntry, { kind: "user" }>;
 

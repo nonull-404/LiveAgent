@@ -1,6 +1,6 @@
-import { loadToken } from "../lib/storage";
 import { getGatewayWebSocketClient } from "../lib/gatewaySocket";
 import type { CronExecutionLog } from "../lib/settings";
+import { loadToken } from "../lib/storage";
 
 type GatewayRuntimeStatus = {
   online: boolean;
@@ -138,13 +138,15 @@ async function pickWorkdirInBrowser(): Promise<string | null> {
 
   return new Promise((resolve) => {
     const overlay = document.createElement("div");
-    overlay.className = "fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
+    overlay.className =
+      "fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm";
     overlay.setAttribute("role", "dialog");
     overlay.setAttribute("aria-modal", "true");
     overlay.setAttribute("aria-label", "选择工作目录");
 
     const panel = document.createElement("form");
-    panel.className = "relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-border/70 bg-background shadow-2xl";
+    panel.className =
+      "relative z-10 w-full max-w-md overflow-hidden rounded-2xl border border-border/70 bg-background shadow-2xl";
 
     const header = document.createElement("div");
     header.className = "border-b border-border/60 px-5 py-4";
@@ -155,7 +157,8 @@ async function pickWorkdirInBrowser(): Promise<string | null> {
 
     const description = document.createElement("div");
     description.className = "mt-1 text-xs text-muted-foreground";
-    description.textContent = "浏览器无法直接打开远程目录选择器。请输入桌面端 Agent 可访问的绝对工作目录路径。";
+    description.textContent =
+      "浏览器无法直接打开远程目录选择器。请输入桌面端 Agent 可访问的绝对工作目录路径。";
 
     const body = document.createElement("div");
     body.className = "space-y-2 px-5 py-5";
@@ -167,21 +170,25 @@ async function pickWorkdirInBrowser(): Promise<string | null> {
 
     const input = document.createElement("input");
     input.id = "gateway-browser-workdir-path";
-    input.className = "h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/20";
+    input.className =
+      "h-10 w-full rounded-lg border border-input bg-background px-3 font-mono text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground/70 focus:border-ring focus:ring-2 focus:ring-ring/20";
     input.placeholder = "/Users/name/project";
     input.type = "text";
 
     const footer = document.createElement("div");
-    footer.className = "flex flex-col-reverse gap-2 border-t border-border/60 bg-muted/20 px-5 py-4 sm:flex-row sm:justify-end";
+    footer.className =
+      "flex flex-col-reverse gap-2 border-t border-border/60 bg-muted/20 px-5 py-4 sm:flex-row sm:justify-end";
 
     const cancelButton = document.createElement("button");
     cancelButton.type = "button";
-    cancelButton.className = "inline-flex h-9 items-center justify-center rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto";
+    cancelButton.className =
+      "inline-flex h-9 items-center justify-center rounded-lg border border-input bg-background px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto";
     cancelButton.textContent = "取消";
 
     const confirmButton = document.createElement("button");
     confirmButton.type = "submit";
-    confirmButton.className = "inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 sm:w-auto";
+    confirmButton.className =
+      "inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:pointer-events-none disabled:opacity-50 sm:w-auto";
     confirmButton.disabled = true;
     confirmButton.textContent = "确认";
     let closed = false;

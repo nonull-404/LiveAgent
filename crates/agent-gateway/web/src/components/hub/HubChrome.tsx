@@ -1,9 +1,8 @@
-import { type ReactNode } from "react";
-
-import { PanelLeft } from "../icons";
-import { Button } from "../ui/button";
+import type { ReactNode } from "react";
 import { useLocale } from "../../i18n";
 import { cn } from "../../lib/shared/utils";
+import { PanelLeft } from "../icons";
+import { Button } from "../ui/button";
 
 export function HubBackdrop(props: { tone?: "amber" | "violet" | "neutral" }) {
   const { tone = "neutral" } = props;
@@ -103,7 +102,6 @@ export function GlassPanel(props: {
         return active
           ? "border-border/55 bg-background/80 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_6px_22px_-14px_rgba(15,23,42,0.18)]"
           : "border-border/40 bg-background/60";
-      case "default":
       default:
         return "border-border/40 bg-background/60";
     }

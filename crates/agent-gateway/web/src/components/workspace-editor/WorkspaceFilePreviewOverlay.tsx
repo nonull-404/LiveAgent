@@ -1,10 +1,11 @@
 import { renderAsync } from "docx-preview";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { read, utils } from "xlsx";
+import { Markdown } from "@/components/Markdown";
 import { useLocale } from "@/i18n";
 import { cn } from "@/lib/shared/utils";
 import { invokeFs } from "@/lib/tools/fsBackend";
-import { getFileTypeIcon, type FileTypeIconComponent } from "../chat/fileTypeIcons";
+import { type FileTypeIconComponent, getFileTypeIcon } from "../chat/fileTypeIcons";
 import {
   AlertTriangle,
   ChevronRight,
@@ -17,7 +18,6 @@ import {
   RotateCwSquare,
   X,
 } from "../icons";
-import { Markdown } from "@/components/Markdown";
 import {
   getWorkspacePreviewKind,
   isWorkspaceEditablePreviewPath,

@@ -190,11 +190,7 @@ export function expandIdentityPath(homePath: string, path: string) {
       return joinIdentityPath(homePath, trimmed.slice("%USERPROFILE%".length), profile);
     }
     if (/^%HOMEDRIVE%%HOMEPATH%[\\/]/i.test(trimmed)) {
-      return joinIdentityPath(
-        homePath,
-        trimmed.slice("%HOMEDRIVE%%HOMEPATH%".length),
-        profile,
-      );
+      return joinIdentityPath(homePath, trimmed.slice("%HOMEDRIVE%%HOMEPATH%".length), profile);
     }
     if (trimmed.startsWith("/") || trimmed.startsWith("\\")) return trimmed;
     return joinIdentityPath(homePath, trimmed, profile);
@@ -209,9 +205,7 @@ export function expandIdentityPath(homePath: string, path: string) {
 function toHomeRelativePath(homePath: string, path: string) {
   const profile = pathProfileFromHome(homePath);
   const home =
-    profile === "windows"
-      ? `${normalizePath(homePath)}/`
-      : `${homePath.replace(/\/+$/, "")}/`;
+    profile === "windows" ? `${normalizePath(homePath)}/` : `${homePath.replace(/\/+$/, "")}/`;
   const normalized = profile === "windows" ? normalizePath(path) : path;
   return normalized.startsWith(home) ? normalized.slice(home.length) : "";
 }

@@ -79,7 +79,9 @@ function normalizeTerminalBytes(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
   if (ArrayBuffer.isView(value)) {
-    return new Uint8Array(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength));
+    return new Uint8Array(
+      value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength),
+    );
   }
   if (Array.isArray(value)) {
     return Uint8Array.from(value.map((item) => Number(item) & 0xff));

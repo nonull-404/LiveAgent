@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useLocale } from "../../i18n";
+import type {
+  GitBranch as GitBranchInfo,
+  GitClient,
+  GitRepositoryState,
+} from "../../lib/git/types";
+import { emptyGitRepositoryState } from "../../lib/git/types";
+import { cn } from "../../lib/shared/utils";
 import { Check, GitBranch, Loader2, Plus, RefreshCw, X } from "../icons";
+import { Button } from "../ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,17 +18,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { cn } from "../../lib/shared/utils";
-import type {
-  GitBranch as GitBranchInfo,
-  GitClient,
-  GitRepositoryState,
-} from "../../lib/git/types";
-import { emptyGitRepositoryState } from "../../lib/git/types";
-import { useLocale } from "../../i18n";
 
 function assertGitOperationResult(value: unknown, fallbackMessage: string) {
   if (!value || typeof value !== "object") return;
@@ -102,10 +102,7 @@ function GitInitModal(props: {
               <GitBranch className="h-5 w-5" />
             </div>
             <div className="min-w-0">
-              <div
-                id={titleId}
-                className="text-sm font-semibold text-foreground"
-              >
+              <div id={titleId} className="text-sm font-semibold text-foreground">
                 {t("git.branchSelector.initRepositoryTitle")}
               </div>
               <div className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -154,10 +151,7 @@ function GitInitModal(props: {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label
-                htmlFor={userNameId}
-                className="text-xs text-muted-foreground"
-              >
+              <Label htmlFor={userNameId} className="text-xs text-muted-foreground">
                 {t("git.branchSelector.userNameOptional")}
               </Label>
               <Input
@@ -169,10 +163,7 @@ function GitInitModal(props: {
               />
             </div>
             <div className="space-y-1.5">
-              <Label
-                htmlFor={userEmailId}
-                className="text-xs text-muted-foreground"
-              >
+              <Label htmlFor={userEmailId} className="text-xs text-muted-foreground">
                 {t("git.branchSelector.userEmailOptional")}
               </Label>
               <Input
@@ -191,13 +182,7 @@ function GitInitModal(props: {
           ) : null}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border/60 px-5 py-4">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            onClick={onClose}
-            disabled={loading}
-          >
+          <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={loading}>
             {t("chat.cancel")}
           </Button>
           <Button type="submit" size="sm" disabled={loading || !branch.trim()}>
@@ -234,9 +219,7 @@ export function GitBranchSelector(props: {
     onChanged,
   } = props;
   const { t } = useLocale();
-  const [state, setState] = useState<GitRepositoryState>(() =>
-    emptyGitRepositoryState(workdir),
-  );
+  const [state, setState] = useState<GitRepositoryState>(() => emptyGitRepositoryState(workdir));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [mutating, setMutating] = useState(false);
@@ -253,43 +236,46 @@ export function GitBranchSelector(props: {
   const refreshInFlightRef = useRef(false);
   const refreshRequestIdRef = useRef(0);
 
-  const refresh = useCallback(async (options: GitBranchRefreshOptions = {}) => {
-    if (!gitClient || !workdir.trim()) {
-      const next = emptyGitRepositoryState(workdir);
-      setState(next);
-      setBranches([]);
-      onStateChange?.(next);
-      return;
-    }
-    if (refreshInFlightRef.current && options.silent && !options.force) return;
-    const requestId = refreshRequestIdRef.current + 1;
-    refreshRequestIdRef.current = requestId;
-    refreshInFlightRef.current = true;
-    if (!options.silent) {
-      setLoading(true);
-    }
-    setError("");
-    try {
-      const response = await gitClient.branches(workdir);
-      if (refreshRequestIdRef.current !== requestId) return;
-      setState(response.state);
-      setBranches(response.branches);
-      onStateChange?.(response.state);
-    } catch (err) {
-      if (refreshRequestIdRef.current !== requestId) return;
-      setError(err instanceof Error ? err.message : String(err));
-      const next = emptyGitRepositoryState(workdir);
-      setState(next);
-      onStateChange?.(next);
-    } finally {
-      if (refreshRequestIdRef.current === requestId) {
-        refreshInFlightRef.current = false;
-        if (!options.silent) {
-          setLoading(false);
+  const refresh = useCallback(
+    async (options: GitBranchRefreshOptions = {}) => {
+      if (!gitClient || !workdir.trim()) {
+        const next = emptyGitRepositoryState(workdir);
+        setState(next);
+        setBranches([]);
+        onStateChange?.(next);
+        return;
+      }
+      if (refreshInFlightRef.current && options.silent && !options.force) return;
+      const requestId = refreshRequestIdRef.current + 1;
+      refreshRequestIdRef.current = requestId;
+      refreshInFlightRef.current = true;
+      if (!options.silent) {
+        setLoading(true);
+      }
+      setError("");
+      try {
+        const response = await gitClient.branches(workdir);
+        if (refreshRequestIdRef.current !== requestId) return;
+        setState(response.state);
+        setBranches(response.branches);
+        onStateChange?.(response.state);
+      } catch (err) {
+        if (refreshRequestIdRef.current !== requestId) return;
+        setError(err instanceof Error ? err.message : String(err));
+        const next = emptyGitRepositoryState(workdir);
+        setState(next);
+        onStateChange?.(next);
+      } finally {
+        if (refreshRequestIdRef.current === requestId) {
+          refreshInFlightRef.current = false;
+          if (!options.silent) {
+            setLoading(false);
+          }
         }
       }
-    }
-  }, [gitClient, onStateChange, workdir]);
+    },
+    [gitClient, onStateChange, workdir],
+  );
 
   useEffect(() => {
     void refresh();
@@ -364,10 +350,7 @@ export function GitBranchSelector(props: {
       setError("");
       try {
         const result = await task();
-        assertGitOperationResult(
-          result,
-          t("git.branchSelector.operationFailed"),
-        );
+        assertGitOperationResult(result, t("git.branchSelector.operationFailed"));
         await refresh({ force: true });
         onChanged?.();
         return true;
@@ -383,9 +366,7 @@ export function GitBranchSelector(props: {
 
   const selectBranch = useCallback(
     (branch: GitBranchInfo) => {
-      void runBranchMutation(() =>
-        gitClient!.switchBranch(workdir, branch.fullName, branch.kind),
-      );
+      void runBranchMutation(() => gitClient!.switchBranch(workdir, branch.fullName, branch.kind));
     },
     [gitClient, runBranchMutation, workdir],
   );
@@ -393,13 +374,11 @@ export function GitBranchSelector(props: {
   const createBranch = useCallback(() => {
     const name = draftBranch.trim();
     if (!name) return;
-    void runBranchMutation(() => gitClient!.createBranch(workdir, name)).then(
-      (ok) => {
-        if (!ok) return;
-        resetCreateBranch();
-        setMenuOpen(false);
-      },
-    );
+    void runBranchMutation(() => gitClient!.createBranch(workdir, name)).then((ok) => {
+      if (!ok) return;
+      resetCreateBranch();
+      setMenuOpen(false);
+    });
   }, [draftBranch, gitClient, resetCreateBranch, runBranchMutation, workdir]);
 
   const openInitModal = useCallback(() => {
@@ -466,10 +445,7 @@ export function GitBranchSelector(props: {
   const stateError = state.status === "error" ? state.error?.trim() || "" : "";
   const visibleError = error || stateError;
   const repositorySummary =
-    state.repoRoot ||
-    state.workdir ||
-    workdir.trim() ||
-    t("git.branchSelector.noRepository");
+    state.repoRoot || state.workdir || workdir.trim() || t("git.branchSelector.noRepository");
   const label = noRepo
     ? t("git.branchSelector.noRepoShort")
     : state.head || t("git.branchSelector.detached");
@@ -507,20 +483,14 @@ export function GitBranchSelector(props: {
               title={t("git.branchSelector.refresh")}
               aria-label={t("git.branchSelector.refresh")}
             >
-              <RefreshCw
-                className={cn("h-3.5 w-3.5", loading && "animate-spin")}
-              />
+              <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
             </button>
           </div>
           {visibleError ? (
-            <div className="px-2 py-1 text-xs text-destructive">
-              {visibleError}
-            </div>
+            <div className="px-2 py-1 text-xs text-destructive">{visibleError}</div>
           ) : null}
           {!canWrite && disabledMessage ? (
-            <div className="px-2 py-1 text-xs text-muted-foreground">
-              {disabledMessage}
-            </div>
+            <div className="px-2 py-1 text-xs text-muted-foreground">{disabledMessage}</div>
           ) : null}
           {noRepo && !visibleError ? (
             <>
@@ -574,9 +544,7 @@ export function GitBranchSelector(props: {
                   className="gap-2 text-xs"
                 >
                   <GitBranch className="h-3.5 w-3.5" />
-                  <span className="min-w-0 flex-1 truncate">
-                    {branch.fullName}
-                  </span>
+                  <span className="min-w-0 flex-1 truncate">{branch.fullName}</span>
                 </DropdownMenuItem>
               ))}
               <DropdownMenuSeparator />

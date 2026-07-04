@@ -1,26 +1,25 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
+  type Dispatch,
   memo,
+  type SetStateAction,
   useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type Dispatch,
-  type SetStateAction,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { Check, CheckCircle2, ChevronDown, Copy, File, FileText, Loader2, Pencil, Settings, X } from "./icons";
-import {
-  normalizeLiveToolStatus,
-  VIBING_STATUS,
-} from "@/lib/chat/chatPageHelpers";
-import { getRoundToolTrace } from "@/lib/chat/uiMessages";
+import { ImagePreview, type ImagePreviewSlide } from "@/components/chat/ImagePreview";
+import { Markdown } from "@/components/Markdown";
+import { useLocale } from "@/i18n/LocaleContext";
+import { normalizeLiveToolStatus, VIBING_STATUS } from "@/lib/chat/chatPageHelpers";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
+import { getRoundToolTrace } from "@/lib/chat/uiMessages";
 import {
   formatUploadedFileSize,
-  parsePastedTextDisplayReferences,
   type PendingUploadedFile,
+  parsePastedTextDisplayReferences,
 } from "@/lib/chat/uploadedFiles";
 import {
   getUploadedImagePreviewCacheKey,
@@ -28,9 +27,6 @@ import {
   readUploadedImagePreviewCache,
   type UploadedImagePreviewLoader,
 } from "@/lib/chat/uploadedImagePreview";
-import { Markdown } from "@/components/Markdown";
-import { ImagePreview, type ImagePreviewSlide } from "@/components/chat/ImagePreview";
-import { useLocale } from "@/i18n/LocaleContext";
 import {
   buildGitHubCommitUrl,
   type CommitDetailsLoader,
@@ -45,10 +41,22 @@ import {
   CompactingText,
   VibingText,
 } from "@/pages/chat/AssistantBubble";
+import type { TranscriptRow } from "../lib/chat/transcript/types";
 
 import type { GatewayTranscriptRound } from "../lib/chatUi";
-import type { TranscriptRow } from "../lib/chat/transcript/types";
 import type { SectionId } from "../pages/settings/types";
+import {
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  Copy,
+  File,
+  FileText,
+  Loader2,
+  Pencil,
+  Settings,
+  X,
+} from "./icons";
 
 type GatewayTranscriptProps = {
   conversationId?: string;
@@ -105,10 +113,7 @@ function resolveNearestScrollViewport(element: HTMLElement | null) {
   return element?.closest("[data-radix-scroll-area-viewport]") as HTMLDivElement | null;
 }
 
-function normalizeRoundsForRender(
-  rounds: GatewayTranscriptRound[],
-  isLive: boolean,
-) {
+function normalizeRoundsForRender(rounds: GatewayTranscriptRound[], isLive: boolean) {
   if (isLive) {
     return rounds;
   }
@@ -153,9 +158,7 @@ function shouldShowLiveStatusForRounds(rounds: GatewayTranscriptRound[]) {
     return true;
   }
   const visibleToolKeys = new Set(
-    getRoundToolTrace(activeRound).map(
-      (item) => `${item.toolCall.id}\u0000${item.toolCall.name}`,
-    ),
+    getRoundToolTrace(activeRound).map((item) => `${item.toolCall.id}\u0000${item.toolCall.name}`),
   );
 
   for (let index = activeRound.blocks.length - 1; index >= 0; index -= 1) {
@@ -211,7 +214,8 @@ function CheckpointCard(props: {
   const { item, readOnly = false } = props;
   const [expanded, setExpanded] = useState(false);
   const isExpanded = expanded;
-  const messageCountLabel = item.coveredMessageCount > 0 ? `${item.coveredMessageCount} 条消息` : "已压缩";
+  const messageCountLabel =
+    item.coveredMessageCount > 0 ? `${item.coveredMessageCount} 条消息` : "已压缩";
   const headerContent = (
     <>
       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-[8px] bg-black/[0.04] dark:bg-white/[0.08]">
@@ -252,7 +256,11 @@ function CheckpointCard(props: {
 
           {isExpanded ? (
             <div className="checkpoint-expand border-t border-black/[0.05] px-3.5 py-3 dark:border-white/[0.06]">
-              <Markdown content={item.content} className="font-openai-chat text-sm" readOnly={readOnly} />
+              <Markdown
+                content={item.content}
+                className="font-openai-chat text-sm"
+                readOnly={readOnly}
+              />
             </div>
           ) : null}
         </div>
@@ -269,9 +277,7 @@ function useGatewayUploadedImagePreview(
   const normalizedWorkspaceRoot = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
   const absolutePath = typeof file?.absolutePath === "string" ? file.absolutePath.trim() : "";
   const relativePath = typeof file?.relativePath === "string" ? file.relativePath.trim() : "";
-  const cacheKey = file
-    ? getUploadedImagePreviewCacheKey(normalizedWorkspaceRoot, file)
-    : "";
+  const cacheKey = file ? getUploadedImagePreviewCacheKey(normalizedWorkspaceRoot, file) : "";
   const [imageSrc, setImageSrc] = useState<string | null | undefined>(() => {
     if (!file || !normalizedWorkspaceRoot) return null;
     return readUploadedImagePreviewCache(normalizedWorkspaceRoot, file);
@@ -492,9 +498,7 @@ function GatewayUserAttachmentCard(props: {
     closePreviewLabel,
   } = props;
   const shouldPreviewImage =
-    file.kind === "image" &&
-    typeof workspaceRoot === "string" &&
-    workspaceRoot.trim();
+    file.kind === "image" && typeof workspaceRoot === "string" && workspaceRoot.trim();
   const { imageSrc, isLoading } = useGatewayUploadedImagePreview(
     shouldPreviewImage ? file : undefined,
     shouldPreviewImage ? workspaceRoot : undefined,
@@ -595,9 +599,7 @@ function splitUserAttachmentsForDisplay(files: PendingUploadedFile[], text: stri
     };
   }
 
-  const pastedTextPaths = new Set(
-    pastedTextReferences.map((reference) => reference.relativePath),
-  );
+  const pastedTextPaths = new Set(pastedTextReferences.map((reference) => reference.relativePath));
   const pastedTextFiles: PendingUploadedFile[] = [];
   const visibleFiles: PendingUploadedFile[] = [];
 
@@ -622,17 +624,8 @@ function GatewayUserMessageBubbleBody(props: {
   onLoadUploadedImagePreview?: UploadedImagePreviewLoader;
   loadCommitDetails?: CommitDetailsLoader;
 }) {
-  const {
-    text,
-    attachments,
-    workspaceRoot,
-    onLoadUploadedImagePreview,
-    loadCommitDetails,
-  } = props;
-  const { visibleFiles, pastedTextFiles } = splitUserAttachmentsForDisplay(
-    attachments,
-    text,
-  );
+  const { text, attachments, workspaceRoot, onLoadUploadedImagePreview, loadCommitDetails } = props;
+  const { visibleFiles, pastedTextFiles } = splitUserAttachmentsForDisplay(attachments, text);
 
   return (
     <div className="chat-user-bubble rounded-2xl rounded-br-md bg-[hsl(var(--chat-user-bg))] px-4 py-2.5 font-openai-chat text-[14.5px] leading-relaxed text-[hsl(var(--chat-user-fg))]">
@@ -670,7 +663,14 @@ const EditableUserMessageBubble = memo(function EditableUserMessageBubble(props:
   onCancel: () => void;
   onSubmit: (text: string, attachments: PendingUploadedFile[]) => void;
 }) {
-  const { initialText, attachments, workspaceRoot, onLoadUploadedImagePreview, onCancel, onSubmit } = props;
+  const {
+    initialText,
+    attachments,
+    workspaceRoot,
+    onLoadUploadedImagePreview,
+    onCancel,
+    onSubmit,
+  } = props;
   const { t } = useLocale();
   const [draftText, setDraftText] = useState(initialText);
   const [draftAttachments, setDraftAttachments] = useState(attachments);
@@ -880,18 +880,12 @@ function GatewayUserMessageRowBody(props: {
               void navigator.clipboard.writeText(row.text).then(() => {
                 setCopiedMessageId(row.key);
                 window.setTimeout(() => {
-                  setCopiedMessageId((current) =>
-                    current === row.key ? null : current,
-                  );
+                  setCopiedMessageId((current) => (current === row.key ? null : current));
                 }, 1500);
               });
             }}
           >
-            {isCopied ? (
-              <Check className="h-3.5 w-3.5" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
+            {isCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           </button>
           <button
             type="button"
@@ -969,9 +963,7 @@ const GatewayTranscriptFoldedRegion = memo(function GatewayTranscriptFoldedRegio
     if (!editingMessageId) {
       return;
     }
-    const hasEditingRow = rows.some(
-      (row) => row.kind === "user" && row.key === editingMessageId,
-    );
+    const hasEditingRow = rows.some((row) => row.kind === "user" && row.key === editingMessageId);
     if (!hasEditingRow) {
       setEditingMessageId(null);
     }
@@ -1008,10 +1000,7 @@ const GatewayTranscriptFoldedRegion = memo(function GatewayTranscriptFoldedRegio
   const virtualRows = transcriptVirtualizer.getVirtualItems();
 
   return (
-    <div
-      className="relative"
-      style={{ height: transcriptVirtualizer.getTotalSize() }}
-    >
+    <div className="relative" style={{ height: transcriptVirtualizer.getTotalSize() }}>
       {virtualRows.map((virtualRow) => {
         const virtualItem = virtualItems[virtualRow.index];
         if (!virtualItem) return null;
@@ -1025,20 +1014,20 @@ const GatewayTranscriptFoldedRegion = memo(function GatewayTranscriptFoldedRegio
               className="absolute left-0 right-0 top-0 flex justify-center"
               style={{ transform: `translateY(${virtualRow.start}px)` }}
             >
-          <button
-            type="button"
-            onClick={onLoadFullHistory}
-            disabled={isLoadingMoreHistory || !onLoadFullHistory}
-            className="rounded-full border border-border/60 bg-background/80 px-4 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {isLoadingMoreHistory
-              ? locale === "en-US"
-                ? "Loading earlier history..."
-                : "正在加载更早历史..."
-              : locale === "en-US"
-                ? "Load earlier history"
-                : "加载更早历史"}
-          </button>
+              <button
+                type="button"
+                onClick={onLoadFullHistory}
+                disabled={isLoadingMoreHistory || !onLoadFullHistory}
+                className="rounded-full border border-border/60 bg-background/80 px-4 py-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {isLoadingMoreHistory
+                  ? locale === "en-US"
+                    ? "Loading earlier history..."
+                    : "正在加载更早历史..."
+                  : locale === "en-US"
+                    ? "Load earlier history"
+                    : "加载更早历史"}
+              </button>
             </div>
           );
         }
@@ -1172,9 +1161,7 @@ const GatewayTranscriptLiveRegion = memo(function GatewayTranscriptLiveRegion(pr
     if (!editingMessageId) {
       return;
     }
-    const hasEditingRow = rows.some(
-      (row) => row.kind === "user" && row.key === editingMessageId,
-    );
+    const hasEditingRow = rows.some((row) => row.kind === "user" && row.key === editingMessageId);
     if (!hasEditingRow) {
       setEditingMessageId(null);
     }
@@ -1251,7 +1238,7 @@ const GatewayTranscriptLiveRegion = memo(function GatewayTranscriptLiveRegion(pr
             Boolean(displayedToolStatus) &&
             !displayedToolStatusIsCompaction &&
             shouldShowLiveStatusForRounds(row.rounds);
-          const liveStatusText = shouldShowLiveStatus ? displayedToolStatus ?? "" : "";
+          const liveStatusText = shouldShowLiveStatus ? (displayedToolStatus ?? "") : "";
           return (
             <article key={row.key} className="gateway-transcript-row">
               <div className="min-w-0 w-full max-w-full space-y-1">
@@ -1263,9 +1250,7 @@ const GatewayTranscriptLiveRegion = memo(function GatewayTranscriptLiveRegion(pr
                   isStreaming={isLatestLiveStreaming}
                   renderMode="streaming"
                 />
-                {shouldShowLiveStatus ? (
-                  <LiveStatusFooter status={liveStatusText} />
-                ) : null}
+                {shouldShowLiveStatus ? <LiveStatusFooter status={liveStatusText} /> : null}
               </div>
             </article>
           );
@@ -1273,7 +1258,10 @@ const GatewayTranscriptLiveRegion = memo(function GatewayTranscriptLiveRegion(pr
 
         if (row.kind === "checkpoint") {
           return (
-            <article key={row.key} className="gateway-transcript-row gateway-transcript-row-checkpoint">
+            <article
+              key={row.key}
+              className="gateway-transcript-row gateway-transcript-row-checkpoint"
+            >
               <CheckpointCard item={row} />
             </article>
           );
@@ -1356,8 +1344,9 @@ export function GatewayTranscript({
 }: GatewayTranscriptProps) {
   const { t } = useLocale();
   const transcriptListRef = useRef<HTMLDivElement | null>(null);
-  const [transcriptScrollViewport, setTranscriptScrollViewport] =
-    useState<HTMLDivElement | null>(null);
+  const [transcriptScrollViewport, setTranscriptScrollViewport] = useState<HTMLDivElement | null>(
+    null,
+  );
   const rowCount = foldedRows.length + liveRows.length;
   const lastFoldedRowKind = foldedRows[foldedRows.length - 1]?.kind;
   const inlineErrorText = error?.trim() ?? "";
@@ -1372,9 +1361,7 @@ export function GatewayTranscript({
 
   useLayoutEffect(() => {
     const nextViewport = resolveNearestScrollViewport(transcriptListRef.current);
-    setTranscriptScrollViewport((current) =>
-      current === nextViewport ? current : nextViewport,
-    );
+    setTranscriptScrollViewport((current) => (current === nextViewport ? current : nextViewport));
   });
 
   if (rowCount === 0 && isLoading) {
@@ -1440,7 +1427,10 @@ export function GatewayTranscript({
 
   return (
     <div className="gateway-transcript-shell">
-      <div ref={transcriptListRef} className="gateway-chat-column gateway-transcript-list select-text">
+      <div
+        ref={transcriptListRef}
+        className="gateway-chat-column gateway-transcript-list select-text"
+      >
         <GatewayTranscriptFoldedRegion
           conversationId={conversationId}
           rows={foldedRows}

@@ -1,14 +1,20 @@
 import {
+  type MutableRefObject,
   memo,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useRef,
   useState,
-  type MutableRefObject,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
+import {
+  MentionComposer,
+  type MentionComposerHandle,
+  type MentionComposerSkill,
+} from "../../components/chat/MentionComposer";
+import { GitBranchSelector } from "../../components/git/GitBranchSelector";
 import {
   Brain,
   ChevronDown,
@@ -25,13 +31,6 @@ import {
   Trash2,
   X,
 } from "../../components/icons";
-
-import {
-  MentionComposer,
-  type MentionComposerHandle,
-  type MentionComposerSkill,
-} from "../../components/chat/MentionComposer";
-import { GitBranchSelector } from "../../components/git/GitBranchSelector";
 import { Button } from "../../components/ui/button";
 import {
   Select,
@@ -41,17 +40,14 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { useLocale } from "../../i18n";
-import {
-  formatUploadedFileSize,
-  type PendingUploadedFile,
-} from "../../lib/chat/uploadedFiles";
-import { cn } from "../../lib/shared/utils";
+import { formatUploadedFileSize, type PendingUploadedFile } from "../../lib/chat/uploadedFiles";
 import type { GitClient } from "../../lib/git/types";
 import {
-  DEFAULT_CHAT_RUNTIME_CONTROLS,
   type ChatRuntimeControls,
+  DEFAULT_CHAT_RUNTIME_CONTROLS,
   type ReasoningLevel,
 } from "../../lib/settings";
+import { cn } from "../../lib/shared/utils";
 
 const REASONING_I18N_KEYS: Record<ReasoningLevel, string> = {
   off: "settings.reasoning.off",
@@ -395,9 +391,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: {
     updateQueueScrollbar();
     list.addEventListener("scroll", updateQueueScrollbar, { passive: true });
     const resizeObserver =
-      typeof ResizeObserver === "undefined"
-        ? null
-        : new ResizeObserver(updateQueueScrollbar);
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateQueueScrollbar);
     resizeObserver?.observe(list);
     window.addEventListener("resize", updateQueueScrollbar);
 
@@ -409,10 +403,7 @@ export const ChatComposerBar = memo(function ChatComposerBar(props: {
   }, [updateQueueScrollbar]);
 
   useEffect(() => {
-    if (
-      reasoningOptions.length > 0 &&
-      reasoningOptions.includes(chatRuntimeControls.reasoning)
-    ) {
+    if (reasoningOptions.length > 0 && reasoningOptions.includes(chatRuntimeControls.reasoning)) {
       return;
     }
     if (

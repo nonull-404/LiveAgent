@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, Loader2, MessageSquareText } from "../components/icons";
-
-import { ScrollArea } from "../components/ui/scroll-area";
 import { GatewayTranscript } from "../components/GatewayTranscript";
+import { AlertCircle, Loader2, MessageSquareText } from "../components/icons";
+import { ScrollArea } from "../components/ui/scroll-area";
 import { buildRowsFromEntries, dedupeRowKeys } from "../lib/chat/transcript/rows";
 import type { ChatEntry } from "../lib/chatUi";
 import type { SharedHistoryDetail } from "../lib/gatewayTypes";
-import { fetchSharedHistory, formatSharedHistoryTimestamp } from "../lib/historyShare";
 import { parseHistoryMessagesJsonAsync } from "../lib/historyParser";
+import { fetchSharedHistory, formatSharedHistoryTimestamp } from "../lib/historyShare";
 
 type SharedHistoryPageProps = {
   token: string;
@@ -53,9 +52,7 @@ export function SharedHistoryPage({ token }: SharedHistoryPageProps) {
   );
   const transcriptRows = useMemo(
     () =>
-      state.status === "ready"
-        ? dedupeRowKeys(buildRowsFromEntries(state.entries, "history"))
-        : [],
+      state.status === "ready" ? dedupeRowKeys(buildRowsFromEntries(state.entries, "history")) : [],
     [state],
   );
 

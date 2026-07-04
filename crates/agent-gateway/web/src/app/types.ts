@@ -1,5 +1,5 @@
-import type { ChatCommandOutcome } from "@/lib/chat/stream/chatCommandPipeline";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
+import type { ChatCommandOutcome } from "@/lib/chat/stream/chatCommandPipeline";
 import type { PendingUploadedFile } from "@/lib/chat/uploadedFiles";
 import type { ChatRuntimeControls, CustomProvider } from "@/lib/settings";
 

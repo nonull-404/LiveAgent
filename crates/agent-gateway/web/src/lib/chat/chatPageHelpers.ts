@@ -1,9 +1,8 @@
 import type { Context } from "../agentTypes";
-
+import { type ModelOption, toModelValue } from "../providers/llm";
 import type { AppSettings } from "../settings";
 import type { ChatHistorySummary } from "./chatHistory";
 import { getMessageText } from "./uiMessages";
-import { toModelValue, type ModelOption } from "../providers/llm";
 
 const FALLBACK_TITLE_MAX_CHARS = 48;
 const TITLE_LOOKAHEAD_TIMEOUT_MS = 1_200;
@@ -117,10 +116,7 @@ export function sortHistoryItems(items: ChatHistorySummary[]) {
   });
 }
 
-export function mergeHistoryItem(
-  items: ChatHistorySummary[],
-  nextItem: ChatHistorySummary,
-) {
+export function mergeHistoryItem(items: ChatHistorySummary[], nextItem: ChatHistorySummary) {
   const existing = items.find((item) => item.id === nextItem.id);
   const merged = existing
     ? {

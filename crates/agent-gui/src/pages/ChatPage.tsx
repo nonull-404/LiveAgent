@@ -212,24 +212,24 @@ import {
   usePendingUploads,
 } from "./chat";
 import {
+  buildGatewayRuntimeSnapshotEntries,
+  type GatewayRuntimeSnapshotState,
+} from "./chat/gateway/chatRuntimeSnapshot";
+import {
   type GatewayChatClaimedRequest,
   normalizeGatewayExecutionMode,
   normalizeGatewayWorkdir,
 } from "./chat/gateway/gatewayBridgeTypes";
 import {
-  buildGatewayRuntimeSnapshotEntries,
-  type GatewayRuntimeSnapshotState,
-} from "./chat/gateway/chatRuntimeSnapshot";
-import {
   appendQueuedChatTurn,
   buildQueuedChatTurnPreview,
+  type ChatQueueItemDetail,
+  type ChatQueueSnapshot,
   createQueuedChatTurn,
   getQueuedConversationIds,
   insertQueuedChatTurnAtSlot,
   moveQueuedChatTurn,
   promoteQueuedChatTurn,
-  type ChatQueueItemDetail,
-  type ChatQueueSnapshot,
   type QueuedChatTurn,
   type QueuedChatTurnEditSlot,
   queuedChatTurnHasContent,
@@ -2563,7 +2563,8 @@ export function ChatPage(props: ChatPageProps) {
       return false;
     }
 
-    const executionMode = normalizeGatewayExecutionMode(payload.executionMode) ?? settings.system.executionMode;
+    const executionMode =
+      normalizeGatewayExecutionMode(payload.executionMode) ?? settings.system.executionMode;
     const workdir =
       normalizeGatewayWorkdir(payload.workdir) ??
       conversationRuntimeCacheRef.current.get(targetConversationId)?.workdir ??
@@ -2581,11 +2582,14 @@ export function ChatPage(props: ChatPageProps) {
       executionMode,
       workdir: isAgentExecutionMode(executionMode) ? workdir : "",
       selectedSystemToolIds:
-        selectedSystemToolIds.length > 0 ? selectedSystemToolIds : settings.system.selectedSystemTools,
+        selectedSystemToolIds.length > 0
+          ? selectedSystemToolIds
+          : settings.system.selectedSystemTools,
       runtimeControls,
       gatewayRequest: {
         requestId,
-        clientRequestId: payload.clientRequestId?.trim() || claimed.clientRequestId?.trim() || undefined,
+        clientRequestId:
+          payload.clientRequestId?.trim() || claimed.clientRequestId?.trim() || undefined,
         workerId: "gui-queue",
         queuePolicy:
           payload.queuePolicy === "append" || payload.queuePolicy === "interrupt"

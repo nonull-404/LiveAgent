@@ -1,21 +1,22 @@
+import * as monaco from "monaco-editor";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
+import HtmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
+import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
+import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import {
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
 } from "react";
-import * as monaco from "monaco-editor";
-import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
-import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
-import HtmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
-import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
-import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
 import { useLocale } from "@/i18n";
 import { cn } from "@/lib/shared/utils";
 import { invokeFs, isFsBackendError } from "@/lib/tools/fsBackend";
+import type { IconComponent } from "../icons";
 import {
   AlertTriangle,
   ClipboardPaste,
@@ -33,7 +34,6 @@ import {
   Undo2,
   X,
 } from "../icons";
-import type { IconComponent } from "../icons";
 import { isWorkspacePreviewPath } from "./workspaceImagePreview";
 
 type MonacoEnvironmentGlobal = typeof globalThis & {

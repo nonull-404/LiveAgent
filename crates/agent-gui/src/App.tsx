@@ -8,8 +8,8 @@ import { LocaleContext, t as translate } from "./i18n";
 import { type AppUpdateController, useAppUpdateController } from "./lib/appUpdates";
 import {
   type AppSettings,
-  getNextTheme,
   getDefaultSettings,
+  getNextTheme,
   normalizeSettings,
   resolveEffectiveTheme,
   resolveWorkspaceProjects,

@@ -269,10 +269,7 @@ export function LocalTunnelPanel({
   }, [normalizedProjectPathKey, scope]);
 
   const tunnels = useMemo(() => snapshot?.tunnels ?? [], [snapshot]);
-  const hasFiniteExpiry = useMemo(
-    () => tunnels.some((tunnel) => tunnel.expiresAt > 0),
-    [tunnels],
-  );
+  const hasFiniteExpiry = useMemo(() => tunnels.some((tunnel) => tunnel.expiresAt > 0), [tunnels]);
 
   useEffect(() => {
     if (!hasFiniteExpiry) return;
@@ -662,7 +659,9 @@ export function LocalTunnelPanel({
                 <div
                   className={cn(
                     "grid overflow-hidden transition-[grid-template-rows,opacity] duration-200 ease-out motion-reduce:transition-none",
-                    showCreateForm && createOpen ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+                    showCreateForm && createOpen
+                      ? "grid-rows-[1fr] opacity-100"
+                      : "grid-rows-[0fr] opacity-0",
                   )}
                 >
                   <div className="min-h-0 overflow-hidden">
@@ -679,7 +678,10 @@ export function LocalTunnelPanel({
                       }}
                     >
                       <div className="grid gap-1.5">
-                        <Label htmlFor="local-tunnel-target" className="text-xs text-muted-foreground">
+                        <Label
+                          htmlFor="local-tunnel-target"
+                          className="text-xs text-muted-foreground"
+                        >
                           {t("projectTools.tunnelTargetUrl")}
                         </Label>
                         <Input
@@ -701,7 +703,10 @@ export function LocalTunnelPanel({
                         ) : null}
                       </div>
                       <div className="grid gap-1.5">
-                        <Label htmlFor="local-tunnel-name" className="text-xs text-muted-foreground">
+                        <Label
+                          htmlFor="local-tunnel-name"
+                          className="text-xs text-muted-foreground"
+                        >
                           {t("projectTools.tunnelName")}
                         </Label>
                         <Input
@@ -736,7 +741,9 @@ export function LocalTunnelPanel({
                         ) : (
                           <Plus className="h-3.5 w-3.5" />
                         )}
-                        {creating ? t("projectTools.tunnelCreating") : t("projectTools.tunnelCreate")}
+                        {creating
+                          ? t("projectTools.tunnelCreating")
+                          : t("projectTools.tunnelCreate")}
                       </Button>
                     </form>
                   </div>
@@ -938,7 +945,9 @@ export function LocalTunnelPanel({
                             type="button"
                             size="sm"
                             className="h-7 gap-1 rounded-lg px-2.5 text-xs"
-                            disabled={!mutationsEnabled || updating || Boolean(editTargetValidationKey)}
+                            disabled={
+                              !mutationsEnabled || updating || Boolean(editTargetValidationKey)
+                            }
                             onClick={() => updateTunnel(tunnel)}
                             title={
                               updating
@@ -1015,9 +1024,13 @@ export function LocalTunnelPanel({
                             />
                             <span className="truncate">{t("projectTools.tunnelServiceLabel")}</span>
                             {localStatus === "ok" && localHealth && localHealth.httpStatus > 0 ? (
-                              <span className="shrink-0 tabular-nums">HTTP {localHealth.httpStatus}</span>
+                              <span className="shrink-0 tabular-nums">
+                                HTTP {localHealth.httpStatus}
+                              </span>
                             ) : (
-                              <span className="truncate">{t(healthStatusLabelKey(localStatus))}</span>
+                              <span className="truncate">
+                                {t(healthStatusLabelKey(localStatus))}
+                              </span>
                             )}
                           </div>
                         </div>
@@ -1068,7 +1081,9 @@ export function LocalTunnelPanel({
                               className="h-7 w-7 rounded-lg text-muted-foreground hover:text-foreground"
                               disabled={!mutationsEnabled || expired || Boolean(pendingAction)}
                               onClick={() => checkTunnel(tunnel.id)}
-                              title={!enabled ? disabledMessage : t("projectTools.tunnelCheckAction")}
+                              title={
+                                !enabled ? disabledMessage : t("projectTools.tunnelCheckAction")
+                              }
                               aria-label={t("projectTools.tunnelCheckAction")}
                             >
                               {pendingAction === "check" ? (

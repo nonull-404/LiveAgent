@@ -1,5 +1,5 @@
-import type { ChatCommandAccepted, ChatCommandUpdate } from "./streamTypes";
 import type { TranscriptStore } from "../transcript/transcriptStore";
+import type { ChatCommandAccepted, ChatCommandUpdate } from "./streamTypes";
 
 // Command lifecycle for chat submissions from this client. The pipeline owns
 // the optimistic user echo and reacts to pre-stream outcomes
@@ -191,11 +191,7 @@ export class ChatCommandPipeline {
     this.hooks.onPendingChanged?.();
   }
 
-  private movePending(
-    from: string,
-    to: string,
-    pending: PendingChatCommand,
-  ): void {
+  private movePending(from: string, to: string, pending: PendingChatCommand): void {
     if (this.pending.get(from) === pending) {
       this.pending.delete(from);
     }

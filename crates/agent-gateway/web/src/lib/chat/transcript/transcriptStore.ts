@@ -1,11 +1,11 @@
-import { type ChatEntry, normalizeLiveUploadedFiles } from "@/lib/chatUi";
-import type { ChatEvent } from "@/lib/gatewayTypes";
 import type {
   ConversationStreamEvent,
   ConversationSubscribeResult,
   StreamRunActivity,
 } from "@/lib/chat/stream/streamTypes";
 import { readEventRunId, readEventSeq } from "@/lib/chat/stream/streamTypes";
+import { type ChatEntry, normalizeLiveUploadedFiles } from "@/lib/chatUi";
+import type { ChatEvent } from "@/lib/gatewayTypes";
 
 import { alignHistory } from "./historyAlignment";
 import { buildRowsFromEntries, buildTurnRows, dedupeRowKeys } from "./rows";
@@ -39,7 +39,7 @@ import type {
 // run_started, settled turns just flip `folded` — row keys and objects never
 // change, so the fold moves zero DOM identity.
 
-export type { TranscriptSnapshot, TranscriptRow, Turn } from "./types";
+export type { TranscriptRow, TranscriptSnapshot, Turn } from "./types";
 
 export type TranscriptStore = {
   getSnapshot(): TranscriptSnapshot;

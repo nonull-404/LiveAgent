@@ -1,7 +1,8 @@
-import { DEFAULT_LOCALE, normalizeLocale, type Locale } from "../../i18n/config";
+import { DEFAULT_LOCALE, type Locale, normalizeLocale } from "../../i18n/config";
 import { mergeAlwaysEnabledSkillNames } from "../skills/builtin";
-import { normalizeApiKey, normalizeBaseUrl, normalizeModels } from "./normalize";
 import { SYSTEM_TOOL_OPTIONS, type SystemToolId } from "../tools/systemToolOptions";
+import { normalizeApiKey, normalizeBaseUrl, normalizeModels } from "./normalize";
+
 export type { SystemToolId } from "../tools/systemToolOptions";
 
 export type ProviderId = "codex" | "claude_code" | "gemini";
@@ -524,9 +525,7 @@ function trimTrailingWindowsProjectSlashes(path: string): string {
 }
 
 function normalizeWindowsProjectPathKey(path: string): string {
-  const stripped = path
-    .replace(/^[\\/]{2}\?[\\/]UNC[\\/]/i, "//")
-    .replace(/^[\\/]{2}\?[\\/]/, "");
+  const stripped = path.replace(/^[\\/]{2}\?[\\/]UNC[\\/]/i, "//").replace(/^[\\/]{2}\?[\\/]/, "");
   return trimTrailingWindowsProjectSlashes(stripped.replace(/\\/g, "/")).toLowerCase();
 }
 
@@ -844,7 +843,7 @@ function normalizeChatRuntimeReasoningByProvider(
   CHAT_RUNTIME_REASONING_PROVIDER_KEYS.forEach((key) => {
     const levels = getChatRuntimeReasoningLevelsForProviderKey(key);
     normalized[key] = normalizeChatRuntimeReasoningForLevels(
-      Object.prototype.hasOwnProperty.call(obj, key) ? obj[key] : fallbackReasoning,
+      Object.hasOwn(obj, key) ? obj[key] : fallbackReasoning,
       levels,
     );
   });
@@ -986,9 +985,7 @@ function normalizeHookHttpRequest(input: unknown): HookHttpRequest {
   const obj = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   const method = normalizeHookHttpMethod(obj.method);
   const body =
-    canHookHttpMethodHaveBody(method) && Object.prototype.hasOwnProperty.call(obj, "body")
-      ? obj.body
-      : undefined;
+    canHookHttpMethodHaveBody(method) && Object.hasOwn(obj, "body") ? obj.body : undefined;
 
   return {
     id: typeof obj.id === "string" && obj.id.trim() ? obj.id.trim() : crypto.randomUUID(),
@@ -1843,9 +1840,8 @@ export function normalizeRightDockProjectState(
   for (const id of Object.keys(tabs)) {
     if (!tabOrder.includes(id)) tabOrder.push(id);
   }
-  const activeTabId = typeof obj.activeTabId === "string" && tabs[obj.activeTabId]
-    ? obj.activeTabId
-    : tabOrder[0];
+  const activeTabId =
+    typeof obj.activeTabId === "string" && tabs[obj.activeTabId] ? obj.activeTabId : tabOrder[0];
   return {
     ...(activeTabId ? { activeTabId } : {}),
     tabOrder,
@@ -2029,10 +2025,7 @@ export function updateSsh(prev: AppSettings, patch: Partial<SshSettings>): AppSe
   });
 }
 
-function normalizeSshProjectHostIdList(
-  ssh: SshSettings,
-  hostIds: readonly string[],
-): string[] {
+function normalizeSshProjectHostIdList(ssh: SshSettings, hostIds: readonly string[]): string[] {
   const availableHostIds = new Set(ssh.hosts.map((host) => host.id));
   const seen = new Set<string>();
   const ids: string[] = [];
@@ -2049,10 +2042,7 @@ function normalizeSshProjectHostIdList(
 export function getSshProjectHostIds(ssh: SshSettings, projectPathKey: string): string[] {
   const normalizedPathKey = workspaceProjectPathKey(projectPathKey);
   if (!normalizedPathKey) return [];
-  return normalizeSshProjectHostIdList(
-    ssh,
-    ssh.projectHostAssociations[normalizedPathKey] ?? [],
-  );
+  return normalizeSshProjectHostIdList(ssh, ssh.projectHostAssociations[normalizedPathKey] ?? []);
 }
 
 export function updateSshProjectHostIds(
@@ -2234,7 +2224,9 @@ export function openRightDockSingletonTab(
   return updateRightDockProjectState(prev, normalizedPathKey, (current) => {
     const tab = current.tabs[tabId] ?? createRightDockSingletonTab(normalizedPathKey, kind);
     const tabs = { ...current.tabs, [tabId]: tab };
-    const tabOrder = current.tabOrder.includes(tabId) ? current.tabOrder : [...current.tabOrder, tabId];
+    const tabOrder = current.tabOrder.includes(tabId)
+      ? current.tabOrder
+      : [...current.tabOrder, tabId];
     return {
       ...current,
       activeTabId: tabId,
@@ -2261,8 +2253,14 @@ export function removeRightDockProjectState(
 ): AppSettings {
   const normalizedPathKey = workspaceProjectPathKey(projectPathKey);
   if (!normalizedPathKey) return prev;
-  const hasRightDockProject = Object.hasOwn(prev.customSettings.rightDock.projects, normalizedPathKey);
-  const hasSshProjectAssociation = Object.hasOwn(prev.ssh.projectHostAssociations, normalizedPathKey);
+  const hasRightDockProject = Object.hasOwn(
+    prev.customSettings.rightDock.projects,
+    normalizedPathKey,
+  );
+  const hasSshProjectAssociation = Object.hasOwn(
+    prev.ssh.projectHostAssociations,
+    normalizedPathKey,
+  );
   if (!hasRightDockProject && !hasSshProjectAssociation) return prev;
   const currentRightDockProject = getRightDockProjectState(prev.customSettings, normalizedPathKey);
   const hasRightDockTabs = Object.keys(currentRightDockProject.tabs).length > 0;
@@ -2344,7 +2342,8 @@ export function updateRightDockFileTreeState(
   if (rightDockFileTreeStateEqual(current, next)) return prev;
   return updateRightDockProjectState(prev, normalizedPathKey, (projectState) => {
     const tabId = RIGHT_DOCK_SINGLETON_TAB_IDS.fileTree;
-    const tab = projectState.tabs[tabId] ?? createRightDockSingletonTab(normalizedPathKey, "fileTree");
+    const tab =
+      projectState.tabs[tabId] ?? createRightDockSingletonTab(normalizedPathKey, "fileTree");
     return {
       ...projectState,
       tabs: {

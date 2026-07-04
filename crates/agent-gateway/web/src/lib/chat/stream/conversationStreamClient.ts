@@ -3,11 +3,7 @@ import type {
   ConversationStreamHandlers,
   ConversationSubscribeResult,
 } from "./streamTypes";
-import {
-  normalizeSubscribeResult,
-  readEventConversationId,
-  readEventSeq,
-} from "./streamTypes";
+import { normalizeSubscribeResult, readEventConversationId, readEventSeq } from "./streamTypes";
 
 // Transport-owned subscription manager: one persistent registration per
 // conversation. Resume is built in — on every (re)connect the manager

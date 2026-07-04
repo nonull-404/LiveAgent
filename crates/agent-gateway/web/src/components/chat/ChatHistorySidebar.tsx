@@ -1,16 +1,24 @@
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   memo,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLocale } from "../../i18n";
+import type { ChatHistorySummary } from "../../lib/chat/chatHistory";
+import {
+  DEFAULT_WORKSPACE_PROJECT_ID,
+  type WorkspaceProject,
+  workspaceProjectPathKey,
+} from "../../lib/settings";
+import { cn } from "../../lib/shared/utils";
+import { sortWorkspaceProjectsByActivity } from "../../lib/workspaceProjects";
 import {
   ChevronRight,
   Edit3,
@@ -29,15 +37,6 @@ import {
   SquarePen,
   Trash2,
 } from "../icons";
-
-import type { ChatHistorySummary } from "../../lib/chat/chatHistory";
-import {
-  DEFAULT_WORKSPACE_PROJECT_ID,
-  workspaceProjectPathKey,
-  type WorkspaceProject,
-} from "../../lib/settings";
-import { cn } from "../../lib/shared/utils";
-import { sortWorkspaceProjectsByActivity } from "../../lib/workspaceProjects";
 import { Button } from "../ui/button";
 import {
   DropdownMenu,

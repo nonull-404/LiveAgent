@@ -9,11 +9,6 @@ import {
   upsertHostedSearchToRound,
   upsertToolCallToRound,
 } from "@/lib/chat/uiMessages";
-import type {
-  DelegateAgentCardResultDetails,
-  DelegateAgentItemResultDetails,
-  DelegateAgentResultDetails,
-} from "@/lib/tools/builtinTypes";
 import {
   type AssistantMeta,
   type ChatEntry,
@@ -21,6 +16,11 @@ import {
   hashValue,
   stripRecoveredToolCallMarkup,
 } from "@/lib/chatUi";
+import type {
+  DelegateAgentCardResultDetails,
+  DelegateAgentItemResultDetails,
+  DelegateAgentResultDetails,
+} from "@/lib/tools/builtinTypes";
 
 import type { TranscriptRow, TranscriptRowOrigin, Turn } from "./types";
 
@@ -123,7 +123,8 @@ function resolveToolCallForResult(
     return byId;
   }
 
-  const byName = toolResult.toolName && findPendingToolCallByName(requestedRound, toolResult.toolName);
+  const byName =
+    toolResult.toolName && findPendingToolCallByName(requestedRound, toolResult.toolName);
   if (byName) {
     return byName;
   }
@@ -131,7 +132,8 @@ function resolveToolCallForResult(
   for (let index = builder.rounds.length - 1; index >= 0; index -= 1) {
     const round = builder.rounds[index];
     if (!round) continue;
-    const candidateById = toolResult.toolCallId && findToolCallInRound(round, toolResult.toolCallId);
+    const candidateById =
+      toolResult.toolCallId && findToolCallInRound(round, toolResult.toolCallId);
     if (candidateById) {
       return candidateById;
     }
@@ -151,8 +153,7 @@ function resolveToolCallForResult(
 }
 
 function asDelegateAgentResultDetails(details: unknown): DelegateAgentResultDetails | null {
-  const record =
-    details && typeof details === "object" ? (details as Record<string, unknown>) : {};
+  const record = details && typeof details === "object" ? (details as Record<string, unknown>) : {};
   return record.kind === "delegate_agent" && Array.isArray(record.agents)
     ? (record as unknown as DelegateAgentResultDetails)
     : null;
@@ -394,7 +395,11 @@ export function buildRowsFromEntries(
       const delegateDetails = asDelegateAgentResultDetails(entry.toolResult.details);
       if (delegateDetails) {
         updateTranscriptRound(assistantGroup, roundNumber, (round) =>
-          appendDelegateAgentCardsToRound(collapseThinking(round), entry.toolResult, delegateDetails),
+          appendDelegateAgentCardsToRound(
+            collapseThinking(round),
+            entry.toolResult,
+            delegateDetails,
+          ),
         );
         continue;
       }

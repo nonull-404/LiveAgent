@@ -1,6 +1,6 @@
+import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { invoke } from "@tauri-apps/api/core";
 import {
   BrushCleaning,
   CheckCircle2,
@@ -15,8 +15,8 @@ import {
 } from "../../components/icons";
 
 import { useLocale } from "../../i18n";
-import { useModalMotion } from "../../lib/shared/modalMotion";
 import type { CronExecutionLog, CronTask, CronTaskType } from "../../lib/settings";
+import { useModalMotion } from "../../lib/shared/modalMotion";
 import { ConfirmActionPopover } from "./shared";
 import { stringifyTaskBody, stringifyTaskHeaders } from "./taskConfigUtils";
 
@@ -56,7 +56,7 @@ const TYPE_CONFIG: Record<
     accentBg: "bg-violet-500/10",
     accentBorder: "border-violet-500/20",
   },
-}
+};
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -115,9 +115,7 @@ function LeftPanel({
           </div>
 
           {/* Name */}
-          <h2 className="mt-3 text-base font-bold leading-tight text-foreground">
-            {task.name}
-          </h2>
+          <h2 className="mt-3 text-base font-bold leading-tight text-foreground">{task.name}</h2>
 
           {/* Description */}
           <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
@@ -300,7 +298,15 @@ function LeftPanel({
 
 /* ─────────────────────── Right panel ─────────────────────── */
 
-function RightPanel({ task, t, onClose }: { task: CronTask; t: (key: string) => string; onClose: () => void }) {
+function RightPanel({
+  task,
+  t,
+  onClose,
+}: {
+  task: CronTask;
+  t: (key: string) => string;
+  onClose: () => void;
+}) {
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [logs, setLogs] = useState<CronExecutionLog[]>([]);
   const [isClearing, setIsClearing] = useState(false);
@@ -365,9 +371,7 @@ function RightPanel({ task, t, onClose }: { task: CronTask; t: (key: string) => 
       {/* ── Fixed header ── */}
       <div className="settings-cron-logs-header flex shrink-0 items-center gap-2 border-b border-border/30 px-5 py-3.5">
         <ScrollText className="h-4 w-4 text-muted-foreground/50" />
-        <span className="text-sm font-semibold text-foreground">
-          {t("settings.cronViewLogs")}
-        </span>
+        <span className="text-sm font-semibold text-foreground">{t("settings.cronViewLogs")}</span>
         <div className="ml-auto flex items-center gap-2">
           <ConfirmActionPopover
             title={t("settings.cronViewClearLogsConfirm")}
@@ -389,14 +393,10 @@ function RightPanel({ task, t, onClose }: { task: CronTask; t: (key: string) => 
                 onClick={open}
                 disabled={logs.length === 0 || isClearing}
                 title={
-                  isClearing
-                    ? t("settings.cronViewClearingLogs")
-                    : t("settings.cronViewClearLogs")
+                  isClearing ? t("settings.cronViewClearingLogs") : t("settings.cronViewClearLogs")
                 }
                 aria-label={
-                  isClearing
-                    ? t("settings.cronViewClearingLogs")
-                    : t("settings.cronViewClearLogs")
+                  isClearing ? t("settings.cronViewClearingLogs") : t("settings.cronViewClearLogs")
                 }
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
               >
@@ -453,9 +453,7 @@ function RightPanel({ task, t, onClose }: { task: CronTask; t: (key: string) => 
                   {/* Summary — fixed-width columns for vertical alignment */}
                   <button
                     type="button"
-                    onClick={() =>
-                      setExpandedLogId(isExpanded ? null : log.id)
-                    }
+                    onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
                     className="settings-log-row flex w-full items-center gap-2 px-3 py-2.5 text-left"
                   >
                     {/* Status icon */}

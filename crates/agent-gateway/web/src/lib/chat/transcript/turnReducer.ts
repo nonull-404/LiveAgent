@@ -1,3 +1,4 @@
+import type { ToolCall } from "@/lib/agentTypes";
 import { isAbortLikeError } from "@/lib/chat/chatPageHelpers";
 import {
   enrichHostedSearchBlockWithText,
@@ -25,7 +26,6 @@ import {
   stripRecoveredToolCallMarkup,
 } from "@/lib/chatUi";
 import type { ChatEvent } from "@/lib/gatewayTypes";
-import type { ToolCall } from "@/lib/agentTypes";
 
 import type { Turn, TurnPhase } from "./types";
 
@@ -104,10 +104,7 @@ function findLastSegmentAssistantIndex(entries: ChatEntry[], round?: number): nu
   return -1;
 }
 
-function countSegmentEntries(
-  entries: ChatEntry[],
-  matcher: (entry: ChatEntry) => boolean,
-): number {
+function countSegmentEntries(entries: ChatEntry[], matcher: (entry: ChatEntry) => boolean): number {
   const start = segmentStartIndex(entries);
   let count = 0;
   for (let index = start; index < entries.length; index += 1) {
@@ -119,10 +116,7 @@ function countSegmentEntries(
   return count;
 }
 
-function countTurnEntries(
-  entries: ChatEntry[],
-  matcher: (entry: ChatEntry) => boolean,
-): number {
+function countTurnEntries(entries: ChatEntry[], matcher: (entry: ChatEntry) => boolean): number {
   let count = 0;
   for (const entry of entries) {
     if (matcher(entry)) {
@@ -143,10 +137,7 @@ function segmentHasAssistantText(entries: ChatEntry[]): boolean {
   return false;
 }
 
-function hasSegmentEntry(
-  entries: ChatEntry[],
-  matcher: (entry: ChatEntry) => boolean,
-): boolean {
+function hasSegmentEntry(entries: ChatEntry[], matcher: (entry: ChatEntry) => boolean): boolean {
   const start = segmentStartIndex(entries);
   for (let index = start; index < entries.length; index += 1) {
     const entry = entries[index];

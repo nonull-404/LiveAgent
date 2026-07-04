@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import {
   Bot,
   CheckCircle2,
@@ -19,21 +19,14 @@ import {
 import { Button } from "../../components/ui/button";
 import { useLocale } from "../../i18n";
 import {
-  HOOK_LIFECYCLE_EVENTS,
   type ConversationHook,
+  HOOK_LIFECYCLE_EVENTS,
   type HookLifecycleEventType,
   updateHooks,
 } from "../../lib/settings";
 import { HookModal } from "./HookModal";
-import {
-  AgentActivationSwitch,
-  ConfirmDeletePopover,
-} from "./shared";
-import {
-  getHookEventDescription,
-  getHookEventLabel,
-  getHookTypeTone,
-} from "./hookUtils";
+import { getHookEventDescription, getHookEventLabel, getHookTypeTone } from "./hookUtils";
+import { AgentActivationSwitch, ConfirmDeletePopover } from "./shared";
 import type { SettingsSectionProps } from "./types";
 
 type LifecyclePhase = {
@@ -56,9 +49,7 @@ type PhaseGroup = {
 export function HooksSection(props: SettingsSectionProps) {
   const { settings, setSettings } = props;
   const { t } = useLocale();
-  const [activeEvent, setActiveEvent] = useState<HookLifecycleEventType>(
-    HOOK_LIFECYCLE_EVENTS[0],
-  );
+  const [activeEvent, setActiveEvent] = useState<HookLifecycleEventType>(HOOK_LIFECYCLE_EVENTS[0]);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingHook, setEditingHook] = useState<ConversationHook | null>(null);
   const [collapsedPhases, setCollapsedPhases] = useState<Set<string>>(new Set());
@@ -168,10 +159,7 @@ export function HooksSection(props: SettingsSectionProps) {
     });
   }
 
-  function updateHookState(
-    hookId: string,
-    updater: (hook: ConversationHook) => ConversationHook,
-  ) {
+  function updateHookState(hookId: string, updater: (hook: ConversationHook) => ConversationHook) {
     setSettings((prev) =>
       updateHooks(
         prev,
@@ -182,7 +170,10 @@ export function HooksSection(props: SettingsSectionProps) {
 
   function deleteHook(hookId: string) {
     setSettings((prev) =>
-      updateHooks(prev, prev.hooks.filter((hook) => hook.id !== hookId)),
+      updateHooks(
+        prev,
+        prev.hooks.filter((hook) => hook.id !== hookId),
+      ),
     );
   }
 
@@ -218,7 +209,9 @@ export function HooksSection(props: SettingsSectionProps) {
             <span className="settings-hooks-stat-label text-xs font-medium text-muted-foreground">
               {t("settings.hooksTotalHooks")}
             </span>
-            <span className="settings-hooks-stat-value ml-0.5 text-sm font-bold tabular-nums">{hooks.length}</span>
+            <span className="settings-hooks-stat-value ml-0.5 text-sm font-bold tabular-nums">
+              {hooks.length}
+            </span>
           </div>
           <div className="settings-hooks-stat flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-1.5">
             <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
@@ -359,7 +352,6 @@ export function HooksSection(props: SettingsSectionProps) {
                                     ) : null}
                                   </div>
                                 </div>
-
                               </button>
                             </li>
                           );
@@ -427,7 +419,7 @@ export function HooksSection(props: SettingsSectionProps) {
                   const stepCount =
                     hook.type === "command"
                       ? (hook.script ?? "").split(/\r?\n/).filter((line) => line.trim()).length
-                      : hook.requests?.length ?? 0;
+                      : (hook.requests?.length ?? 0);
                   return (
                     <div
                       key={hook.id}
@@ -450,7 +442,9 @@ export function HooksSection(props: SettingsSectionProps) {
 
                         <div className="settings-hooks-card-main min-w-0 flex-1">
                           <div className="settings-hooks-card-meta flex flex-wrap items-center gap-2">
-                            <span className="settings-hooks-card-name truncate text-sm font-semibold">{hook.name}</span>
+                            <span className="settings-hooks-card-name truncate text-sm font-semibold">
+                              {hook.name}
+                            </span>
                             <span className="settings-hooks-card-badge rounded-md bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
                               {stepCount}{" "}
                               {hook.type === "command"

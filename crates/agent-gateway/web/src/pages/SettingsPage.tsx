@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft,
   BookOpen,
@@ -22,10 +22,7 @@ import { SshSection } from "./settings/SshSection";
 import { SystemSettingsForm } from "./settings/SystemSettingsForm";
 import type { SectionId, SettingsPageProps } from "./settings/types";
 
-function getSaveIndicator(
-  state: SettingsPageProps["saveState"],
-  t: (key: string) => string,
-) {
+function getSaveIndicator(state: SettingsPageProps["saveState"], t: (key: string) => string) {
   switch (state.status) {
     case "saving":
       return {
@@ -78,9 +75,7 @@ function NavItem({ icon, label, active, onClick }: NavItemProps) {
         >
           {icon}
         </div>
-        <div className="settings-nav-label min-w-0 truncate text-sm leading-none">
-          {label}
-        </div>
+        <div className="settings-nav-label min-w-0 truncate text-sm leading-none">{label}</div>
       </div>
     </button>
   );
@@ -102,9 +97,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     labelKey: "settings.groupIntelligence",
-    items: [
-      { id: "memory", icon: <Brain className="h-4 w-4" /> },
-    ],
+    items: [{ id: "memory", icon: <Brain className="h-4 w-4" /> }],
   },
   {
     labelKey: "settings.groupAutomation",
@@ -156,10 +149,7 @@ export function SettingsPage(props: SettingsPageProps) {
       })).filter((group) => group.items.length > 0),
     [hiddenSectionSet, sectionLabels, t],
   );
-  const allNavItems = useMemo(
-    () => navGroups.flatMap((g) => g.items),
-    [navGroups],
-  );
+  const allNavItems = useMemo(() => navGroups.flatMap((g) => g.items), [navGroups]);
 
   useEffect(() => {
     setSection(initialSection);
@@ -259,7 +249,6 @@ export function SettingsPage(props: SettingsPageProps) {
             </div>
           ))}
         </nav>
-
       </aside>
 
       <main className="settings-main flex min-w-0 flex-1 flex-col">

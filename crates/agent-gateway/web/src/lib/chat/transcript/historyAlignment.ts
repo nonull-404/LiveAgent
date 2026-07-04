@@ -199,7 +199,8 @@ function alignReplace(params: { turns: Turn[]; entries: ChatEntry[] }): AlignRes
   );
   if (activeRefs.size > 0) {
     historyTurns = historyTurns.filter(
-      (turn) => !turn.user?.messageRef?.messageId || !activeRefs.has(turn.user.messageRef.messageId),
+      (turn) =>
+        !turn.user?.messageRef?.messageId || !activeRefs.has(turn.user.messageRef.messageId),
     );
   }
 

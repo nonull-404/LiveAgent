@@ -527,9 +527,7 @@ export function ToolResultDisplay({
     const details = result.details as DeleteResultDetails;
     return (
       <ToolSurface>
-        <MetaTags
-          tags={[...filePathTags(details), { label: "kind", value: details.targetKind }]}
-        />
+        <MetaTags tags={[...filePathTags(details), { label: "kind", value: details.targetKind }]} />
       </ToolSurface>
     );
   }

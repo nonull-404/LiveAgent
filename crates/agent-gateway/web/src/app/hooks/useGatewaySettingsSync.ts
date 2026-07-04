@@ -1,27 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { GatewayWebSocketClientLike } from "@/lib/gatewaySocket";
+import { setPreferredMonacoNlsLocale } from "@/lib/monacoNls";
 import {
+  type AppSettings,
   normalizeSettings,
   resolveEffectiveTheme,
   subscribeToSystemThemePreference,
-  type AppSettings,
 } from "@/lib/settings";
 import {
   applyGatewaySettingsSyncPayload,
   buildGatewaySettingsSyncUpdatePayload,
-  redactSettingsForWebStorage,
   type GatewaySettingsSyncPayload,
+  redactSettingsForWebStorage,
 } from "@/lib/settings/sync";
 import { loadToken } from "@/lib/storage";
 import { loadWebSettings, persistWebSettings, type WebSettingsSaveState } from "@/lib/webSettings";
-import { setPreferredMonacoNlsLocale } from "@/lib/monacoNls";
 
 import { asErrorMessage } from "../chatEventUtils";
-import {
-  hasSettingsSyncChanged,
-  resolveAppWorkspaceProjects,
-} from "../historyUtils";
+import { hasSettingsSyncChanged, resolveAppWorkspaceProjects } from "../historyUtils";
 
 export function useGatewaySettingsSync(params: {
   token: string;

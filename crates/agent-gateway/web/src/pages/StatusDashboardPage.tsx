@@ -10,6 +10,7 @@ import {
   Globe2,
   HardDrive,
   History,
+  type IconComponent,
   Loader2,
   LogOut,
   MessageSquareText,
@@ -25,14 +26,13 @@ import {
   WifiOff,
   Wrench,
   Zap,
-  type IconComponent,
 } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { normalizeGatewayAccessToken, verifyGatewayAccessToken } from "@/lib/gatewayAuth";
 import {
+  type GatewayWebSocketClientLike,
   getGatewayWebSocketClient,
   resetGatewayWebSocketClient,
-  type GatewayWebSocketClientLike,
   type TunnelStateSnapshot,
 } from "@/lib/gatewaySocket";
 import type {
@@ -43,8 +43,8 @@ import type {
   HistoryList,
   HistoryWorkdirSummary,
 } from "@/lib/gatewayTypes";
-import { cn } from "@/lib/shared/utils";
 import type { GatewaySettingsSyncPayload } from "@/lib/settings/sync";
+import { cn } from "@/lib/shared/utils";
 import { clearToken, loadToken, saveToken } from "@/lib/storage";
 import type { TerminalSession } from "@/lib/terminal/types";
 import { LoginPage } from "./LoginPage";
@@ -290,7 +290,8 @@ function updateHistoryListWithEvent(history: HistoryList | null, event: any): Hi
   if (!history) {
     return history;
   }
-  const conversationId = typeof event.conversation_id === "string" ? event.conversation_id.trim() : "";
+  const conversationId =
+    typeof event.conversation_id === "string" ? event.conversation_id.trim() : "";
   if (!conversationId) {
     return history;
   }
@@ -392,10 +393,12 @@ function summarizeChatEvent(event: ChatEvent): DashboardEvent | null {
     const queries = "queries" in event && Array.isArray(event.queries) ? event.queries : [];
     detail = queries.length ? truncateMiddle(queries.join(" / "), 80) : "联网检索通道产生事件。";
   } else if (type === "tool_status") {
-    const statusText = "status" in event && typeof event.status === "string" ? event.status.trim() : "";
+    const statusText =
+      "status" in event && typeof event.status === "string" ? event.status.trim() : "";
     detail = statusText || "工具链状态更新。";
   } else if (type === "error" || type === "failed") {
-    detail = "message" in event && typeof event.message === "string" ? event.message : "执行出现异常。";
+    detail =
+      "message" in event && typeof event.message === "string" ? event.message : "执行出现异常。";
   } else if (type === "done" || type === "completed") {
     detail = "一段会话工作流完成。";
   } else if ("message" in event && typeof event.message === "string" && event.message.trim()) {
@@ -448,7 +451,12 @@ function useNow(tickMs = 1000) {
 
 function StatusPill({ online, label }: { online: boolean; label: string }) {
   return (
-    <span className={cn("status-board-pill", online ? "status-board-pill--online" : "status-board-pill--offline")}>
+    <span
+      className={cn(
+        "status-board-pill",
+        online ? "status-board-pill--online" : "status-board-pill--offline",
+      )}
+    >
       <span className="status-board-pill-dot" />
       {label}
     </span>
@@ -458,7 +466,9 @@ function StatusPill({ online, label }: { online: boolean; label: string }) {
 function MetricTile({ metric }: { metric: MetricCard }) {
   const Icon = metric.icon;
   return (
-    <section className={cn("status-board-card status-board-metric", `status-board-tone-${metric.tone}`)}>
+    <section
+      className={cn("status-board-card status-board-metric", `status-board-tone-${metric.tone}`)}
+    >
       <div className="status-board-metric-icon">
         <Icon size={18} strokeWidth={2.2} />
       </div>
@@ -480,7 +490,10 @@ function FactList({ items }: { items: FactItem[] }) {
   return (
     <div className="status-board-fact-list">
       {items.map((item) => (
-        <div key={item.label} className={cn("status-board-fact", item.tone && `status-board-fact--${item.tone}`)}>
+        <div
+          key={item.label}
+          className={cn("status-board-fact", item.tone && `status-board-fact--${item.tone}`)}
+        >
           <span>{item.label}</span>
           <strong title={item.value}>{item.value}</strong>
           {item.unit && <b>{item.unit}</b>}
@@ -580,8 +593,16 @@ function useDashboardAuth() {
 
 export function StatusDashboardPage() {
   const now = useNow();
-  const { token, loginToken, authSubmitting, authError, setLoginToken, setAuthError, submit, logout } =
-    useDashboardAuth();
+  const {
+    token,
+    loginToken,
+    authSubmitting,
+    authError,
+    setLoginToken,
+    setAuthError,
+    submit,
+    logout,
+  } = useDashboardAuth();
   const api = useMemo(() => (token ? getGatewayWebSocketClient(token) : null), [token]);
   const pendingEventsRef = useRef<DashboardEvent[]>([]);
   const pendingCountersRef = useRef<PendingCounters>(initialPendingCounters());
@@ -611,7 +632,9 @@ export function StatusDashboardPage() {
       pendingCountersRef.current = initialPendingCounters();
 
       if (nextEvents.length > 0) {
-        setRecentEvents((current) => [...nextEvents.reverse(), ...current].slice(0, MAX_RECENT_EVENTS));
+        setRecentEvents((current) =>
+          [...nextEvents.reverse(), ...current].slice(0, MAX_RECENT_EVENTS),
+        );
       }
       if (pendingCounters.events > 0) {
         setLiveCounters((current) => ({
@@ -762,35 +785,53 @@ export function StatusDashboardPage() {
   const observedMinutes = Math.max(1, (now - liveCounters.startedAt) / 60_000);
   const eventsPerMinute = liveCounters.events / observedMinutes;
   const messageSampleCount = useMemo(
-    () => (history?.conversations ?? []).reduce((total, item) => total + (item.message_count || 0), 0),
+    () =>
+      (history?.conversations ?? []).reduce((total, item) => total + (item.message_count || 0), 0),
     [history],
   );
   const todayConversationCount = useMemo(() => {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
-    return (history?.conversations ?? []).filter((item) => normalizeEpochMs(item.created_at) >= start.getTime()).length;
+    return (history?.conversations ?? []).filter(
+      (item) => normalizeEpochMs(item.created_at) >= start.getTime(),
+    ).length;
   }, [history, now]);
   const runtimeState = formatRuntimeState(status);
-  const runtimeHeartbeatAgeMs = status?.runtime_last_heartbeat ? now - normalizeEpochMs(status.runtime_last_heartbeat) : 0;
+  const runtimeHeartbeatAgeMs = status?.runtime_last_heartbeat
+    ? now - normalizeEpochMs(status.runtime_last_heartbeat)
+    : 0;
   const runtimeActiveRunCount = status?.runtime_active_run_count ?? runningConversations.length;
-  const totalTunnelConnections = activeTunnels.reduce((sum, item) => sum + item.activeConnections, 0);
+  const totalTunnelConnections = activeTunnels.reduce(
+    (sum, item) => sum + item.activeConnections,
+    0,
+  );
   const activeWorkspaceProjects = settingsSnapshot?.system.workspaceProjects ?? [];
   const activeWorkspaceProject =
-    activeWorkspaceProjects.find((project) => project.id === settingsSnapshot?.system.activeWorkspaceProjectId) ??
-    activeWorkspaceProjects[0];
+    activeWorkspaceProjects.find(
+      (project) => project.id === settingsSnapshot?.system.activeWorkspaceProjectId,
+    ) ?? activeWorkspaceProjects[0];
   const selectedModel = settingsSnapshot?.selectedModel ?? null;
   const selectedProvider = selectedModel
-    ? providers.find((provider) => provider.id === selectedModel.customProviderId) ??
-      settingsSnapshot?.customProviders.find((provider) => provider.id === selectedModel.customProviderId)
+    ? (providers.find((provider) => provider.id === selectedModel.customProviderId) ??
+      settingsSnapshot?.customProviders.find(
+        (provider) => provider.id === selectedModel.customProviderId,
+      ))
     : undefined;
-  const selectedProviderName = selectedProvider?.name?.trim() || selectedModel?.customProviderId || "--";
+  const selectedProviderName =
+    selectedProvider?.name?.trim() || selectedModel?.customProviderId || "--";
   const selectedProviderType = selectedProvider?.type || "--";
-  const selectedModelConfig = selectedProvider?.models?.find((model) => model.id === selectedModel?.model);
+  const selectedModelConfig = selectedProvider?.models?.find(
+    (model) => model.id === selectedModel?.model,
+  );
   const enabledCronCount = settingsSnapshot?.cron.filter((task) => task.enabled).length ?? 0;
   const enabledHookCount = settingsSnapshot?.hooks.filter((hook) => hook.enabled).length ?? 0;
-  const enabledMcpCount = settingsSnapshot?.mcp.servers.filter((server) => server.enabled).length ?? 0;
-  const configuredProviderCount = settingsSnapshot?.customProviders.filter((provider) => provider.apiKeyConfigured).length ?? 0;
-  const selectedSkillCount = settingsSnapshot?.skills.enabled ? settingsSnapshot.skills.selected.length : 0;
+  const enabledMcpCount =
+    settingsSnapshot?.mcp.servers.filter((server) => server.enabled).length ?? 0;
+  const configuredProviderCount =
+    settingsSnapshot?.customProviders.filter((provider) => provider.apiKeyConfigured).length ?? 0;
+  const selectedSkillCount = settingsSnapshot?.skills.enabled
+    ? settingsSnapshot.skills.selected.length
+    : 0;
   const remoteFeatureCount = settingsSnapshot?.remote
     ? [
         settingsSnapshot.remote.enableWebTerminal,
@@ -800,7 +841,8 @@ export function StatusDashboardPage() {
     : 0;
   const latestTerminal = runningTerminals[0] ?? terminals[0];
   const activeWorkspaceName =
-    activeWorkspaceProject?.name?.trim() || (activeWorkspaceProject?.path ? basename(activeWorkspaceProject.path) : "--");
+    activeWorkspaceProject?.name?.trim() ||
+    (activeWorkspaceProject?.path ? basename(activeWorkspaceProject.path) : "--");
   const activeWorkspaceHint = activeWorkspaceProject?.path
     ? truncateMiddle(activeWorkspaceProject.path, 48)
     : settingsSnapshot
@@ -834,13 +876,44 @@ export function StatusDashboardPage() {
     liveCounters.errors,
   ];
   const maxLoadValue = Math.max(1, ...activeLoadValues);
-  const toLoadWidth = (value: number) => Math.max(value > 0 ? 12 : 4, Math.round((value / maxLoadValue) * 100));
+  const toLoadWidth = (value: number) =>
+    Math.max(value > 0 ? 12 : 4, Math.round((value / maxLoadValue) * 100));
   const throughputSegments: LoadSegment[] = [
-    { label: "Token Chunks", value: liveCounters.tokenChunks, unit: "chunks", width: toLoadWidth(liveCounters.tokenChunks), tone: "cyan" },
-    { label: "Reasoning", value: liveCounters.thinking, unit: "events", width: toLoadWidth(liveCounters.thinking), tone: "violet" },
-    { label: "Tool I/O", value: liveCounters.toolCalls + liveCounters.toolResults, unit: "events", width: toLoadWidth(liveCounters.toolCalls + liveCounters.toolResults), tone: "amber" },
-    { label: "Web Search", value: liveCounters.searches, unit: "events", width: toLoadWidth(liveCounters.searches), tone: "emerald" },
-    { label: "Errors", value: liveCounters.errors, unit: "events", width: toLoadWidth(liveCounters.errors), tone: "rose" },
+    {
+      label: "Token Chunks",
+      value: liveCounters.tokenChunks,
+      unit: "chunks",
+      width: toLoadWidth(liveCounters.tokenChunks),
+      tone: "cyan",
+    },
+    {
+      label: "Reasoning",
+      value: liveCounters.thinking,
+      unit: "events",
+      width: toLoadWidth(liveCounters.thinking),
+      tone: "violet",
+    },
+    {
+      label: "Tool I/O",
+      value: liveCounters.toolCalls + liveCounters.toolResults,
+      unit: "events",
+      width: toLoadWidth(liveCounters.toolCalls + liveCounters.toolResults),
+      tone: "amber",
+    },
+    {
+      label: "Web Search",
+      value: liveCounters.searches,
+      unit: "events",
+      width: toLoadWidth(liveCounters.searches),
+      tone: "emerald",
+    },
+    {
+      label: "Errors",
+      value: liveCounters.errors,
+      unit: "events",
+      width: toLoadWidth(liveCounters.errors),
+      tone: "rose",
+    },
   ];
 
   const runtimeFacts: FactItem[] = [
@@ -854,7 +927,10 @@ export function StatusDashboardPage() {
       label: "Active Runs",
       value: String(runtimeActiveRunCount),
       unit: "runs",
-      note: status?.runtime_active_run_count !== undefined ? "runtime_active_run_count" : "history running fallback",
+      note:
+        status?.runtime_active_run_count !== undefined
+          ? "runtime_active_run_count"
+          : "history running fallback",
       tone: runtimeActiveRunCount > 0 ? "violet" : "slate",
     },
     {
@@ -884,9 +960,13 @@ export function StatusDashboardPage() {
     },
     {
       label: "Context Window",
-      value: selectedModelConfig?.contextWindow ? compactNumber(selectedModelConfig.contextWindow) : "--",
+      value: selectedModelConfig?.contextWindow
+        ? compactNumber(selectedModelConfig.contextWindow)
+        : "--",
       unit: "tokens",
-      note: selectedModelConfig?.maxOutputToken ? `${compactNumber(selectedModelConfig.maxOutputToken)} max output tokens` : "model config",
+      note: selectedModelConfig?.maxOutputToken
+        ? `${compactNumber(selectedModelConfig.maxOutputToken)} max output tokens`
+        : "model config",
     },
     {
       label: "Reasoning Mode",
@@ -958,7 +1038,9 @@ export function StatusDashboardPage() {
       label: "Agent Link",
       value: status?.online ? (isFreshHeartbeat ? "LIVE" : "WARM") : "OFFLINE",
       unit: "state",
-      detail: status?.online ? `uptime ${formatDuration(uptimeMs)} · heartbeat age ${formatDuration(heartbeatAgeMs)}` : statusError || "desktop agent not connected",
+      detail: status?.online
+        ? `uptime ${formatDuration(uptimeMs)} · heartbeat age ${formatDuration(heartbeatAgeMs)}`
+        : statusError || "desktop agent not connected",
       tone: status?.online ? "emerald" : "rose",
       icon: status?.online ? Wifi : WifiOff,
     },
@@ -1043,10 +1125,17 @@ export function StatusDashboardPage() {
           <div className="status-board-command-center">
             <span>1912×948 Telemetry Surface</span>
             <strong>{formatClock(now)}</strong>
-            <em>{snapshot.lastRefreshAt ? `sync age ${formatDuration(now - snapshot.lastRefreshAt)}` : "syncing snapshot"}</em>
+            <em>
+              {snapshot.lastRefreshAt
+                ? `sync age ${formatDuration(now - snapshot.lastRefreshAt)}`
+                : "syncing snapshot"}
+            </em>
           </div>
           <div className="status-board-actions">
-            <StatusPill online={status?.online === true} label={status?.online ? "Agent online" : "Agent offline"} />
+            <StatusPill
+              online={status?.online === true}
+              label={status?.online ? "Agent online" : "Agent offline"}
+            />
             <Button
               type="button"
               variant="ghost"
@@ -1054,14 +1143,23 @@ export function StatusDashboardPage() {
               onClick={() => setRefreshVersion((value) => value + 1)}
               disabled={snapshot.loading}
             >
-              {snapshot.loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+              {snapshot.loading ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : (
+                <RefreshCw size={15} />
+              )}
               Sync
             </Button>
             <a className="status-board-link-button" href="./" title="回到 Gateway 控制台">
               Console
               <ExternalLink size={14} />
             </a>
-            <Button type="button" variant="ghost" className="status-board-action-button" onClick={logout}>
+            <Button
+              type="button"
+              variant="ghost"
+              className="status-board-action-button"
+              onClick={logout}
+            >
               <LogOut size={15} />
               Exit
             </Button>
@@ -1087,7 +1185,10 @@ export function StatusDashboardPage() {
               </div>
               <div className="status-board-reactor-core">
                 <div
-                  className={cn("status-board-reactor", status?.online && "status-board-reactor--online")}
+                  className={cn(
+                    "status-board-reactor",
+                    status?.online && "status-board-reactor--online",
+                  )}
                   style={{
                     background: `conic-gradient(from -90deg, rgba(41, 255, 214, 0.96) 0deg, rgba(20, 184, 255, 0.96) ${integrityScore * 3.6}deg, rgba(30, 39, 68, 0.88) ${integrityScore * 3.6}deg 360deg)`,
                   }}
@@ -1101,8 +1202,15 @@ export function StatusDashboardPage() {
                 </div>
                 <div className="status-board-reactor-copy">
                   <span>Runtime: {runtimeState}</span>
-                  <strong>{status?.agent_id ? truncateMiddle(status.agent_id, 24) : "等待 Agent 接入"}</strong>
-                  <em>我在监听 Gateway 心跳：{status?.last_heartbeat ? `${formatDuration(heartbeatAgeMs)} ago` : "no heartbeat"}</em>
+                  <strong>
+                    {status?.agent_id ? truncateMiddle(status.agent_id, 24) : "等待 Agent 接入"}
+                  </strong>
+                  <em>
+                    我在监听 Gateway 心跳：
+                    {status?.last_heartbeat
+                      ? `${formatDuration(heartbeatAgeMs)} ago`
+                      : "no heartbeat"}
+                  </em>
                 </div>
               </div>
               <FactList items={runtimeFacts} />
@@ -1171,7 +1279,9 @@ export function StatusDashboardPage() {
                     <span
                       key={segment.label}
                       className={cn("status-board-radar-node", `status-board-tone-${segment.tone}`)}
-                      style={{ transform: `rotate(${index * 72 - 18}deg) translateX(${118 + segment.width * 0.62}px)` }}
+                      style={{
+                        transform: `rotate(${index * 72 - 18}deg) translateX(${118 + segment.width * 0.62}px)`,
+                      }}
                     />
                   ))}
                 </div>
@@ -1182,7 +1292,10 @@ export function StatusDashboardPage() {
                     <strong>{compactNumber(liveCounters.events)} events</strong>
                   </div>
                   {throughputSegments.map((segment) => (
-                    <div key={segment.label} className={cn("status-board-load-row", `status-board-tone-${segment.tone}`)}>
+                    <div
+                      key={segment.label}
+                      className={cn("status-board-load-row", `status-board-tone-${segment.tone}`)}
+                    >
                       <span>{segment.label}</span>
                       <div>
                         <i style={{ width: `${segment.width}%` }} />
@@ -1207,10 +1320,15 @@ export function StatusDashboardPage() {
               </div>
               <div className="status-board-event-list">
                 {recentEvents.length === 0 ? (
-                  <EmptyState>我还没收到实时事件；当 token、thinking 或 tool_call 抵达时，这里会亮起来。</EmptyState>
+                  <EmptyState>
+                    我还没收到实时事件；当 token、thinking 或 tool_call 抵达时，这里会亮起来。
+                  </EmptyState>
                 ) : (
                   recentEvents.slice(0, 6).map((event) => (
-                    <article key={event.id} className={cn("status-board-event", `status-board-tone-${event.tone}`)}>
+                    <article
+                      key={event.id}
+                      className={cn("status-board-event", `status-board-tone-${event.tone}`)}
+                    >
                       <span className="status-board-event-dot" />
                       <div>
                         <div className="status-board-event-title-row">
@@ -1220,7 +1338,9 @@ export function StatusDashboardPage() {
                         <p>{event.detail}</p>
                         {(event.conversationId || event.workdir) && (
                           <span className="status-board-event-meta">
-                            {event.workdir ? basename(event.workdir) : truncateMiddle(event.conversationId ?? "", 18)}
+                            {event.workdir
+                              ? basename(event.workdir)
+                              : truncateMiddle(event.conversationId ?? "", 18)}
                           </span>
                         )}
                       </div>
@@ -1251,7 +1371,8 @@ export function StatusDashboardPage() {
                       <div>
                         <strong>{truncateMiddle(item.title, 34)}</strong>
                         <span>
-                          {item.cwd ? basename(item.cwd) : "默认空间"} · {item.messageCount} messages · {formatDuration(now - item.updatedAt)} ago
+                          {item.cwd ? basename(item.cwd) : "默认空间"} · {item.messageCount}{" "}
+                          messages · {formatDuration(now - item.updatedAt)} ago
                         </span>
                       </div>
                     </article>
@@ -1284,7 +1405,13 @@ export function StatusDashboardPage() {
                         <span>{truncateMiddle(item.path, 46)}</span>
                       </div>
                       <div className="status-board-workdir-meter">
-                        <span style={{ width: percentage(((item.conversationCount || 0) / maxWorkdirCount) * 100) }} />
+                        <span
+                          style={{
+                            width: percentage(
+                              ((item.conversationCount || 0) / maxWorkdirCount) * 100,
+                            ),
+                          }}
+                        />
                       </div>
                       <em>{item.conversationCount} conversations</em>
                     </article>
@@ -1298,7 +1425,8 @@ export function StatusDashboardPage() {
         <footer className="status-board-footer">
           <span>
             <CheckCircle2 size={14} />
-            Sources: status.get / settings.get / history.list / terminal.list / tunnel.state / providers.list
+            Sources: status.get / settings.get / history.list / terminal.list / tunnel.state /
+            providers.list
           </span>
           <span>
             <Timer size={14} />

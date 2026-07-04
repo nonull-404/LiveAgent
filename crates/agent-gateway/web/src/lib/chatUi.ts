@@ -1,25 +1,15 @@
 import type { Message, ToolCall, ToolResultMessage, Usage } from "@/lib/agentTypes";
 import type { HistoryMessageRef } from "@/lib/chat/conversationState";
+import { type HostedSearchBlock, normalizeHostedSearchBlock } from "@/lib/chat/hostedSearch";
+
+import { summarizeToolCall as summarizeDesktopToolCall, type UiRound } from "@/lib/chat/uiMessages";
 import {
   getUserMessageAttachments,
   getUserMessageDisplayText,
   type PendingUploadedFile,
 } from "@/lib/chat/uploadedFiles";
 
-import {
-  summarizeToolCall as summarizeDesktopToolCall,
-  type UiRound,
-} from "@/lib/chat/uiMessages";
-import {
-  normalizeHostedSearchBlock,
-  type HostedSearchBlock,
-} from "@/lib/chat/hostedSearch";
-
-import type {
-  ChatCheckpointPayload,
-  ChatEvent,
-  ConversationSummary,
-} from "./gatewayTypes";
+import type { ChatCheckpointPayload, ChatEvent, ConversationSummary } from "./gatewayTypes";
 
 export type AssistantMeta = NonNullable<UiRound["meta"]>;
 
@@ -391,9 +381,8 @@ export function buildAssistantMeta(params: {
   stopReason?: unknown;
   usage?: unknown;
 }) {
-  const usage = params.usage && typeof params.usage === "object"
-    ? (params.usage as Usage)
-    : undefined;
+  const usage =
+    params.usage && typeof params.usage === "object" ? (params.usage as Usage) : undefined;
 
   const meta: AssistantMeta = {
     provider: readString(params.provider) || undefined,
@@ -443,9 +432,7 @@ export function normalizeCheckpointEntry(params: {
   const model = readString(generatedByRecord.model).trim() || "summary";
   const promptVersion = readString(generatedByRecord.promptVersion).trim() || undefined;
   const timestamp =
-    readNumber(params.checkpoint?.timestamp) ??
-    readNumber(params.timestamp) ??
-    Date.now();
+    readNumber(params.checkpoint?.timestamp) ?? readNumber(params.timestamp) ?? Date.now();
 
   return {
     id: `checkpoint-${summaryId}`,
@@ -482,11 +469,9 @@ function normalizeToolCall(toolCall: ToolCallLike, fallbackId: string): ToolCall
   } as ToolCall;
 }
 
-function normalizeToolResultContentBlock(
-  block: unknown,
-): ToolResultMessage["content"][number][] {
+function normalizeToolResultContentBlock(block: unknown): ToolResultMessage["content"][number][] {
   if (typeof block === "string") {
-    return block === "" ? [] : [{ type: "text", text: block }] as ToolResultMessage["content"];
+    return block === "" ? [] : ([{ type: "text", text: block }] as ToolResultMessage["content"]);
   }
 
   const record = asRecord(block);
@@ -494,11 +479,7 @@ function normalizeToolResultContentBlock(
   if (type === "text") {
     return [{ type: "text", text: readString(record.text) }] as ToolResultMessage["content"];
   }
-  if (
-    type === "image" &&
-    typeof record.mimeType === "string" &&
-    typeof record.data === "string"
-  ) {
+  if (type === "image" && typeof record.mimeType === "string" && typeof record.data === "string") {
     return [
       {
         type: "image",
@@ -532,9 +513,7 @@ function buildToolResult(params: {
   fallbackToolCallId?: string;
 }) {
   const toolCallId =
-    readString(params.toolCallId).trim() ||
-    params.fallbackToolCallId ||
-    randomId("tool-result");
+    readString(params.toolCallId).trim() || params.fallbackToolCallId || randomId("tool-result");
   const toolName = readString(params.toolName).trim() || "Tool";
   const timestamp = readNumber(params.timestamp) ?? Date.now();
 
@@ -735,9 +714,7 @@ export function parseHistoryMessagesJson(raw: string): ChatEntry[] {
       const attachments = getUserMessageAttachments(userRecord);
       const messageRef = readHistoryMessageRef(userRecord.liveAgentHistoryRef);
       if (text.trim() || attachments.length > 0) {
-        const baseId = messageRef
-          ? `hu:${messageRef.messageId}`
-          : `hu:~${hashText(text)}`;
+        const baseId = messageRef ? `hu:${messageRef.messageId}` : `hu:~${hashText(text)}`;
         const occurrence = usedUserIds.get(baseId) ?? 0;
         usedUserIds.set(baseId, occurrence + 1);
         const id = occurrence === 0 ? baseId : `${baseId}:${occurrence}`;
@@ -825,7 +802,9 @@ export function parseHistoryMessagesJson(raw: string): ChatEntry[] {
         }
 
         if (block.type === "hostedSearch") {
-          entries.push(buildHostedSearchEntry(block.hostedSearch, round, { entryId: nextEntryId() }));
+          entries.push(
+            buildHostedSearchEntry(block.hostedSearch, round, { entryId: nextEntryId() }),
+          );
         }
       }
 

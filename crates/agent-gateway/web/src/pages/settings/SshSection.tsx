@@ -25,10 +25,10 @@ import { Label } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
 import { useLocale } from "../../i18n";
 import {
+  removeSshHostFromProjectAssociations,
   type SshAuthType,
   type SshHostConfig,
   type SshProxyType,
-  removeSshHostFromProjectAssociations,
   updateSsh,
 } from "../../lib/settings";
 import { useModalMotion } from "../../lib/shared/modalMotion";
@@ -305,7 +305,7 @@ function SshHostModal(props: {
                   isPasswordAuth
                     ? "border-emerald-500/40 bg-emerald-500/[0.06] shadow-sm"
                     : "border-border/60 bg-card hover:border-border hover:bg-muted/20"
-                  }`}
+                }`}
               >
                 <Lock
                   className={`h-4 w-4 shrink-0 text-emerald-500 transition-transform duration-200 ${
@@ -460,8 +460,7 @@ function SshHostModal(props: {
                     disabled={!isPrivateKeyAuth}
                     onChange={setPrivateKeyPassphrase}
                   />
-                  {initialData?.privateKeyPassphraseConfigured &&
-                  !privateKeyPassphrase.trim() ? (
+                  {initialData?.privateKeyPassphraseConfigured && !privateKeyPassphrase.trim() ? (
                     <div className="text-[11px] text-muted-foreground">
                       {t("settings.sshPrivateKeyPassphraseConfigured")}
                     </div>
@@ -964,8 +963,9 @@ export function SshSection(props: SettingsSectionProps) {
   const [importOpen, setImportOpen] = useState(false);
   const [editingHost, setEditingHost] = useState<SshHostConfig | null>(null);
   const [knownHostResettingId, setKnownHostResettingId] = useState<string | null>(null);
-  const [knownHostResetStatus, setKnownHostResetStatus] =
-    useState<SshKnownHostResetStatus | null>(null);
+  const [knownHostResetStatus, setKnownHostResetStatus] = useState<SshKnownHostResetStatus | null>(
+    null,
+  );
   const knownHostResetTimerRef = useRef<number | null>(null);
   const hosts = settings.ssh.hosts;
 
@@ -1048,8 +1048,7 @@ export function SshSection(props: SettingsSectionProps) {
                 ...data.proxy,
                 password: data.proxy.password || host.proxy.password,
                 passwordConfigured:
-                  data.proxy.password.trim().length > 0 ||
-                  host.proxy.passwordConfigured === true,
+                  data.proxy.password.trim().length > 0 || host.proxy.passwordConfigured === true,
               },
             };
           }),

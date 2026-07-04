@@ -1287,7 +1287,7 @@ async function executeOrganizerRun(
     mergedCount: 0,
     parseFailures: 0,
   };
-  const trimmedProtocol: {
+  const report: {
     clusterSummaries: string[];
     reviewNotes: string[];
     raw: Array<{ clusterId: string; text: string }>;
@@ -1310,12 +1310,12 @@ async function executeOrganizerRun(
     stats.inputCount = entries.length;
     stats.clusterCount = clusters.length;
     if (clusterPlan.rawMeta) {
-      trimmedProtocol.raw.push({
+      report.raw.push({
         clusterId: "__topic_clustering__",
         text: clip(clusterPlan.rawMeta, ORGANIZER_RAW_PROTOCOL_CHARS),
       });
     }
-    trimmedProtocol.compressionForecast = {
+    report.compressionForecast = {
       from: entries.length,
       toMin: Math.max(0, Math.floor(entries.length * 0.6)),
       toMax: Math.max(0, Math.ceil(entries.length * 0.8)),
@@ -1329,7 +1329,7 @@ async function executeOrganizerRun(
         finalSummary,
         inputCount: 0,
         clusterCount: 0,
-        trimmedProtocol,
+        report,
       });
       advanceScheduledOrganizer(run, setSettings);
       return;
@@ -1346,14 +1346,14 @@ async function executeOrganizerRun(
           workdir,
         });
         parsedResults.push({ cluster, plan });
-        trimmedProtocol.clusterSummaries.push(plan.summary);
-        trimmedProtocol.raw.push({
+        report.clusterSummaries.push(plan.summary);
+        report.raw.push({
           clusterId: cluster.id,
           text: clip(plan.raw, ORGANIZER_RAW_PROTOCOL_CHARS),
         });
       } catch (error) {
         stats.parseFailures += 1;
-        trimmedProtocol.reviewNotes.push(
+        report.reviewNotes.push(
           `Cluster ${cluster.id} plan submission failed: ${
             error instanceof Error ? error.message : String(error)
           }`,
@@ -1363,7 +1363,7 @@ async function executeOrganizerRun(
 
     if (parsedResults.length === 0 && stats.parseFailures > 0) {
       const message = `所有 ${stats.parseFailures} 个分组都未提交有效整理计划，已跳过本次写入。`;
-      trimmedProtocol.reviewNotes.push(message);
+      report.reviewNotes.push(message);
       await memoryOrganizeDueComplete({
         runId: run.runId,
         status: "failed",
@@ -1379,7 +1379,7 @@ async function executeOrganizerRun(
         parseFailures: stats.parseFailures,
         error: message,
         finalSummary: `本次记忆整理失败：${message}请重新运行或调整记忆整理模型。`,
-        trimmedProtocol,
+        report,
       });
       advanceScheduledOrganizer(run, setSettings);
       return;
@@ -1388,15 +1388,15 @@ async function executeOrganizerRun(
     const safe = buildSafeDecisions(parsedResults, run);
     stats.reviewSkipped += safe.reviewSkipped;
     stats.mergedCount = safe.mergedCount;
-    trimmedProtocol.rejectionBuckets = safe.rejectionBuckets;
+    report.rejectionBuckets = safe.rejectionBuckets;
     if (safe.reviewNotes.length > 0) {
-      trimmedProtocol.reviewNotes.push(...safe.reviewNotes);
+      report.reviewNotes.push(...safe.reviewNotes);
     }
     let batch: MemoryBatchResponse = { created: [], updated: [], deleted: [], warnings: [] };
     if (run.trigger === "manual") {
       stats.pendingSafeDecisions = safe.decisions.length;
-      trimmedProtocol.safeDecisions = safe.decisions;
-      trimmedProtocol.manualApplyState = { status: "pending" };
+      report.safeDecisions = safe.decisions;
+      report.manualApplyState = { status: "pending" };
     } else if (safe.decisions.length > 0) {
       batch = await memoryApplyBatch({
         workdir,
@@ -1410,7 +1410,7 @@ async function executeOrganizerRun(
       stats.safeApplied = appliedBatchCount(batch);
       stats.reviewSkipped += batch.warnings.length;
       if (batch.warnings.length > 0) {
-        trimmedProtocol.reviewNotes.push(...batch.warnings);
+        report.reviewNotes.push(...batch.warnings);
       }
     }
 
@@ -1429,7 +1429,7 @@ async function executeOrganizerRun(
       mergedCount: stats.mergedCount,
       parseFailures: stats.parseFailures,
       finalSummary,
-      trimmedProtocol,
+      report,
     });
 
     advanceScheduledOrganizer(run, setSettings);
@@ -1450,7 +1450,7 @@ async function executeOrganizerRun(
       parseFailures: stats.parseFailures,
       error: message,
       finalSummary: `本次记忆整理失败：${message}`,
-      trimmedProtocol,
+      report,
     });
     advanceScheduledOrganizer(run, setSettings);
   }

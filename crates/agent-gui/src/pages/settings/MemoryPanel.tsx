@@ -699,7 +699,7 @@ function MemoryOrganizerHistoryModal(props: {
         finalSummary: existingFinalSummary.includes("手动应用结果")
           ? manualSummary
           : `${manualSummary}${existingFinalSummary ? `\n\n模型原始总结：${existingFinalSummary}` : ""}`,
-        trimmedProtocol: {
+        report: {
           ...selectedProtocol,
           version: ORGANIZER_PROTOCOL_VERSION,
           reviewItems: [...reviewItems, ...nextReviewItems],

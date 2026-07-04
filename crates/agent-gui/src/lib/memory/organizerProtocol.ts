@@ -63,8 +63,8 @@ export type OrganizerProtocolObject = {
 export const ORGANIZER_PROTOCOL_VERSION = 2;
 
 export function protocolObject(run: MemoryOrganizeRun | null): OrganizerProtocolObject {
-  return run?.trimmedProtocol && typeof run.trimmedProtocol === "object"
-    ? (run.trimmedProtocol as OrganizerProtocolObject)
+  return run?.report && typeof run.report === "object"
+    ? (run.report as OrganizerProtocolObject)
     : {};
 }
 

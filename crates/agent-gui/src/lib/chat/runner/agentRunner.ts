@@ -45,7 +45,7 @@ import type {
 } from "../../settings";
 import { withPowerActivity } from "../../system/powerActivity";
 import { sanitizeContextForModelRequest } from "../context/requestContextSanitizer";
-import { buildMemoryToolsSuffixSection } from "../memory/memoryPolicy";
+import { buildMemoryToolsSuffixSection } from "../../memory/prompts/injection";
 import {
   appendHostedSearchBlocksToAssistant,
   type HostedSearchBlock,

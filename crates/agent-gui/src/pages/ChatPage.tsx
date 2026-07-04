@@ -80,7 +80,7 @@ import {
 } from "../lib/chat/history/chatHistorySync";
 import { clearSilentMemoryDecisions } from "../lib/chat/memory/memoryDecisionLog";
 import { clearMemoryExtractorState } from "../lib/chat/memory/memoryExtractor";
-import { buildMemoryOverviewSection } from "../lib/chat/memory/memoryPrompt";
+import { buildMemoryOverviewSection } from "../lib/memory/prompts/injection";
 import {
   escapeMarkdownReferenceLabel,
   formatFileMentionToken,

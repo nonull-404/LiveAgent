@@ -130,9 +130,11 @@ test("uploaded image previews fall back to files.preview when no local object UR
   );
 });
 
-function createDelegateAgent(id, prompt, summary) {
+function createSubagentReport(id, prompt, summary, extra = {}) {
   return {
     id,
+    runId: `run-${id}`,
+    name: `Agent ${id}`,
     prompt,
     mode: "readonly",
     status: "completed",
@@ -140,6 +142,7 @@ function createDelegateAgent(id, prompt, summary) {
     durationMs: 1200,
     rounds: 2,
     toolCalls: 3,
+    ...extra,
   };
 }
 
@@ -1042,7 +1045,7 @@ test("applyEventToTurn snapshots mutable streamed Write arguments", () => {
   assert.equal(turn.entries[0].toolCall.arguments.content, "first\nsecond");
 });
 
-test("buildRowsFromEntries expands parent Agent aggregate results into Agent cards", () => {
+test("buildRowsFromEntries expands parent Agent batch results into Agent cards", () => {
   const entries = [
     {
       id: "assistant-tool-call",
@@ -1054,9 +1057,10 @@ test("buildRowsFromEntries expands parent Agent aggregate results into Agent car
         name: "Agent",
         arguments: {
           agents: [
-            { id: "a", description: "Agent A", prompt: "Inspect A." },
-            { id: "b", description: "Agent B", prompt: "Inspect B." },
+            { id: "a", name: "Agent a", prompt: "Inspect A." },
+            { id: "b", name: "Agent b", prompt: "Inspect B." },
           ],
+          concurrency: 2,
         },
       },
       summary: "Agent",
@@ -1072,15 +1076,15 @@ test("buildRowsFromEntries expands parent Agent aggregate results into Agent car
         toolName: "Agent",
         content: [{ type: "text", text: "aggregate" }],
         details: {
-          kind: "delegate_agent",
+          kind: "subagent_batch",
+          status: "ok",
           agentCount: 2,
           concurrency: 2,
           totalDurationMs: 2400,
-          readOnly: true,
           mode: "readonly",
           agents: [
-            createDelegateAgent("a", "Agent A", "A done"),
-            createDelegateAgent("b", "Agent B", "B done"),
+            createSubagentReport("a", "Inspect A.", "A done"),
+            createSubagentReport("b", "Inspect B.", "B done"),
           ],
         },
         isError: false,
@@ -1099,12 +1103,12 @@ test("buildRowsFromEntries expands parent Agent aggregate results into Agent car
   const toolBlocks = items[0].rounds[0].blocks.filter((block) => block.kind === "tool");
   assert.equal(toolBlocks.length, 2);
   assert.deepEqual(
-    toolBlocks.map((block) => block.item.toolCall.arguments.delegate_agent_card),
+    toolBlocks.map((block) => block.item.toolCall.arguments.subagent_card),
     [true, true],
   );
   assert.deepEqual(
     toolBlocks.map((block) => block.item.toolResult.details.kind),
-    ["delegate_agent_item", "delegate_agent_item"],
+    ["subagent_card", "subagent_card"],
   );
   assert.deepEqual(
     toolBlocks.map((block) => block.item.toolResult.details.agent.summary),
@@ -1113,23 +1117,23 @@ test("buildRowsFromEntries expands parent Agent aggregate results into Agent car
   assert.deepEqual(items[0].rounds[0].runningToolCallIds, []);
 });
 
-test("buildDelegateAgentPlaceholderToolCalls parses agent_spec into stable Agent cards", () => {
-  const placeholders = uiMessages.buildDelegateAgentPlaceholderToolCalls({
+test("buildSubagentPlaceholderToolCalls builds stable Agent cards from structured agents", () => {
+  const placeholders = uiMessages.buildSubagentPlaceholderToolCalls({
     type: "toolCall",
     id: "call-agent",
     name: "Agent",
     arguments: {
       concurrency: 8,
-      agent_spec: [
-        "@agent id=player1 mode=readonly",
-        "name: 一号玩家",
-        "role: 发言者",
-        "prompt: 第一轮请给出观点",
-        "---",
-        "@agent id=player2 mode=readonly",
-        "name: 二号玩家",
-        "prompt: 第二轮请反驳",
-      ].join("\n"),
+      agents: [
+        {
+          id: "player1",
+          name: "一号玩家",
+          role: "发言者",
+          mode: "readonly",
+          prompt: "第一轮请给出观点",
+        },
+        { id: "player2", name: "二号玩家", mode: "readonly", prompt: "第二轮请反驳" },
+      ],
     },
   });
 
@@ -1147,8 +1151,16 @@ test("buildDelegateAgentPlaceholderToolCalls parses agent_spec into stable Agent
     ["第一轮请给出观点", "第二轮请反驳"],
   );
   assert.deepEqual(
-    placeholders.map((item) => item.arguments.delegate_agent_card),
+    placeholders.map((item) => item.arguments.role),
+    ["发言者", undefined],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.subagent_card),
     [true, true],
+  );
+  assert.deepEqual(
+    placeholders.map((item) => item.arguments.concurrency),
+    [2, 2],
   );
 });
 
@@ -1163,15 +1175,10 @@ test("buildRowsFromEntries shows Agent placeholders while aggregate result is pe
       name: "Agent",
       arguments: {
         concurrency: 8,
-        agent_spec: [
-          "@agent id=player1 mode=readonly",
-          "name: 一号玩家",
-          "prompt: 第一轮请给出观点",
-          "---",
-          "@agent id=player2 mode=readonly",
-          "name: 二号玩家",
-          "prompt: 第二轮请反驳",
-        ].join("\n"),
+        agents: [
+          { id: "player1", name: "一号玩家", mode: "readonly", prompt: "第一轮请给出观点" },
+          { id: "player2", name: "二号玩家", mode: "readonly", prompt: "第二轮请反驳" },
+        ],
       },
     },
     summary: "Agent",
@@ -1209,15 +1216,15 @@ test("buildRowsFromEntries shows Agent placeholders while aggregate result is pe
           toolName: "Agent",
           content: [{ type: "text", text: "aggregate" }],
           details: {
-            kind: "delegate_agent",
+            kind: "subagent_batch",
+            status: "ok",
             agentCount: 2,
             concurrency: 2,
             totalDurationMs: 2400,
-            readOnly: true,
             mode: "readonly",
             agents: [
-              createDelegateAgent("player1", "第一轮请给出观点", "一号完成"),
-              createDelegateAgent("player2", "第二轮请反驳", "二号完成"),
+              createSubagentReport("player1", "第一轮请给出观点", "一号完成"),
+              createSubagentReport("player2", "第二轮请反驳", "二号完成"),
             ],
           },
           isError: false,
@@ -1244,15 +1251,13 @@ test("buildRowsFromEntries shows Agent placeholders while aggregate result is pe
 });
 
 test("buildRowsFromEntries uses the stable Agent name supplied by item results", () => {
-  const firstAgent = {
-    ...createDelegateAgent("agent-1", "哲学视角探讨生命的意义", "first"),
+  const firstAgent = createSubagentReport("agent-1", "哲学视角探讨生命的意义", "first", {
     name: "哲学家 - 苏格拉底",
-  };
-  const secondAgent = {
-    ...createDelegateAgent("agent-1", "哲学家继续回应", "second"),
+  });
+  const secondAgent = createSubagentReport("agent-1", "哲学家继续回应", "second", {
     name: "哲学家 - 苏格拉底",
     role: "哲学视角",
-  };
+  });
   const entries = [
     {
       id: "first-result",
@@ -1264,11 +1269,11 @@ test("buildRowsFromEntries uses the stable Agent name supplied by item results",
         toolName: "Agent",
         content: [{ type: "text", text: "first aggregate" }],
         details: {
-          kind: "delegate_agent",
+          kind: "subagent_batch",
+          status: "ok",
           agentCount: 1,
           concurrency: 1,
           totalDurationMs: 1200,
-          readOnly: true,
           mode: "readonly",
           agents: [firstAgent],
         },
@@ -1288,11 +1293,11 @@ test("buildRowsFromEntries uses the stable Agent name supplied by item results",
         toolName: "Agent",
         content: [{ type: "text", text: "second aggregate" }],
         details: {
-          kind: "delegate_agent",
+          kind: "subagent_batch",
+          status: "ok",
           agentCount: 1,
           concurrency: 1,
           totalDurationMs: 1200,
-          readOnly: true,
           mode: "readonly",
           agents: [secondAgent],
         },

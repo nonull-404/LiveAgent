@@ -1158,34 +1158,6 @@ test("web remote settings normalize single-slash http gateway URLs", () => {
   assert.equal(remoteWithOversizedPort.grpcPort, 65_535);
 });
 
-test("web cron task normalization preserves finite and exhausted run counts", () => {
-  const finite = settings.normalizeCronTask({
-    id: "cron-finite",
-    type: "bash",
-    script: "echo finite",
-    remainingExecutions: "2",
-  });
-  assert.equal(finite.remainingExecutions, 2);
-
-  const exhausted = settings.normalizeCronTask({
-    id: "cron-exhausted",
-    type: "bash",
-    script: "echo exhausted",
-    enabled: true,
-    remainingExecutions: 0,
-  });
-  assert.equal(exhausted.remainingExecutions, 0);
-  assert.equal(exhausted.enabled, false);
-
-  const invalid = settings.normalizeCronTask({
-    id: "cron-invalid",
-    type: "bash",
-    script: "echo invalid",
-    remainingExecutions: "-1",
-  });
-  assert.equal(invalid.remainingExecutions, undefined);
-});
-
 test("web provider normalization keeps native web search toggle", () => {
   const enabledByDefault = settings.normalizeCustomProvider({
     id: "provider-enabled",

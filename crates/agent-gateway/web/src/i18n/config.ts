@@ -725,6 +725,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "workspaceFilePreview.zoomIn": "放大",
     "workspaceFilePreview.rotateImage": "旋转图片",
     "workspaceFilePreview.imageCounter": "{index} / {total}",
+    "workspaceFilePreview.imageUnavailable": "图片暂不可用",
 
     /* ── Settings Nav ── */
     "settings.navSystem": "系统设置",
@@ -2375,6 +2376,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     "workspaceFilePreview.zoomIn": "Zoom in",
     "workspaceFilePreview.rotateImage": "Rotate image",
     "workspaceFilePreview.imageCounter": "{index} / {total}",
+    "workspaceFilePreview.imageUnavailable": "Image unavailable",
 
     /* ── Settings Nav ── */
     "settings.navSystem": "System",

@@ -1125,7 +1125,7 @@ function ProviderList(props: {
       : ccsAll.length
         ? `发现 ${ccsBreakdown
             .map((entry) => `${getProviderLabel(entry.type)} ${entry.count}`)
-            .join(" · ")}，点击选择导入`
+            .join(" · ")}`
         : scanned
           ? ccsMessage || "未发现可导入的供应商"
           : "点击扫描本地配置";

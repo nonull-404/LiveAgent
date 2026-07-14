@@ -117,7 +117,9 @@ LiveAgent 是一个 **本地优先** 的 AI Agent 桌面客户端。它将大语
 
 ### 需要远程访问? 部署 Gateway
 
-桌面端开箱即用,不依赖任何服务端。只有想 **在浏览器里远程操控本地 Agent** 时,才需要部署 Gateway:
+桌面端开箱即用,不依赖任何服务端。只有想 **在浏览器里远程操控本地 Agent** 时,才需要部署 Gateway。
+
+**注意：在部署并使用Nginx反向代理后，设置中Remote页面Gateway地址填写Https地址，端口号填写443。**
 
 ```bash
 # Docker 构建(multi-stage,最终镜像 ~30MB)
@@ -131,8 +133,6 @@ docker run -p 50051:50051 -p 50052:8080 \
 
 <details>
 <summary><b>Nginx 反向代理配置</b> — 自建域名 / TLS 时参考</summary>
-
-
 > Gateway 对外有两类流量：
 >
 > 桌面端的 **gRPC 双向流** (默认 50051) 与浏览器端的 **HTTP / WebSocket ** (默认 50052)。
@@ -189,6 +189,10 @@ location / {
 > 上游端口与上方 `docker run` 的宿主机映射一一对应:gRPC 50051、HTTP/WebSocket 50052(容器内 HTTP 实际监听 `PORT=8080`)。gRPC 代理要求 Nginx 以 HTTP/2 接收桌面端连接(`listen 443 ssl; http2 on;`)。
 
 </details>
+
+
+
+
 
 ### 从源码构建
 

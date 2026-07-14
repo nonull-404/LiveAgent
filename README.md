@@ -135,21 +135,6 @@ docker run -d \
   ghcr.io/stack-cairn/liveagent-gateway:latest
 ```
 
-常用运维命令:
-
-```bash
-docker logs -f liveagent-gateway      # 查看日志
-docker restart liveagent-gateway     # 重启服务
-
-# 升级到最新版本
-docker pull ghcr.io/stack-cairn/liveagent-gateway:latest
-docker stop liveagent-gateway && docker rm liveagent-gateway
-# 再执行上方 docker run 命令即可(Gateway 无本地状态,可随时重建)
-
-# 也可从源码本地构建(multi-stage,最终镜像 ~30MB)
-docker build -t liveagent-gateway .
-```
-
 <details>
 <summary><b>Nginx 反向代理配置</b> — 自建域名 / TLS 时参考</summary>
 > Gateway 对外有两类流量：

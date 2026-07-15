@@ -1,0 +1,108 @@
+name: Build Standalone Windows Gateway
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/build-gateway-windows-direct.yml
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-gateway:
+    runs-on: windows-latest
+    env:
+      SOURCE_REPOSITORY: Stack-Cairn/LiveAgent
+      SOURCE_REF: v1.0.9
+      RELEASE_TAG: gateway-v1.0.9-windows-amd64
+      ASSET_NAME: liveagent-gateway-v1.0.9-windows-amd64.exe
+      GH_REPO: ${{ github.repository }}
+
+    steps:
+      - name: Checkout official v1.0.9 source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.SOURCE_REPOSITORY }}
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.17.1
+          cache: pnpm
+          cache-dependency-path: crates/agent-gateway/web/pnpm-lock.yaml
+
+      - name: Build embedded Gateway WebUI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          pnpm --dir crates/agent-gateway/web install --frozen-lockfile
+          pnpm --dir crates/agent-gateway/web build
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.25.x
+          cache-dependency-path: crates/agent-gateway/go.sum
+
+      - name: Build standalone Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $env:CGO_ENABLED = "0"
+          $env:GOOS = "windows"
+          $env:GOARCH = "amd64"
+          Push-Location crates/agent-gateway
+          go build -trimpath -ldflags="-s -w" -o "../../artifacts/$env:ASSET_NAME" ./cmd/gateway
+          Pop-Location
+          if (-not (Test-Path "artifacts/$env:ASSET_NAME")) {
+            throw "Gateway executable was not generated."
+          }
+
+      - name: Generate SHA-256 checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $asset = "artifacts/$env:ASSET_NAME"
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $env:ASSET_NAME" | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+          Get-Item $asset | Format-List Name,Length,LastWriteTime
+          Get-Content artifacts/SHA256SUMS.txt
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: liveagent-gateway-v1.0.9-windows-amd64
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish permanent GitHub Release assets
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          gh release view $env:RELEASE_TAG --repo $env:GH_REPO *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $env:RELEASE_TAG `
+              --repo $env:GH_REPO `
+              --target $env:GITHUB_SHA `
+              --title "LiveAgent Gateway v1.0.9 Windows x64" `
+              --notes "Standalone Windows x64 Gateway built from official Stack-Cairn/LiveAgent v1.0.9 source. No Docker, Node.js, Go, or source tree is required on the target computer."
+          }
+          gh release upload $env:RELEASE_TAG `
+            "artifacts/$env:ASSET_NAME" `
+            "artifacts/SHA256SUMS.txt" `
+            --clobber `
+            --repo $env:GH_REPO

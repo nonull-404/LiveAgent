@@ -19,6 +19,7 @@ jobs:
       SOURCE_REF: v1.0.9
       RELEASE_TAG: gateway-v1.0.9-windows-amd64
       ASSET_NAME: liveagent-gateway-v1.0.9-windows-amd64.exe
+      PACKAGE_NAME: LiveAgent-Gateway-v1.0.9-Windows-x64.zip
       GH_REPO: ${{ github.repository }}
 
     steps:
@@ -69,14 +70,148 @@ jobs:
             throw "Gateway executable was not generated."
           }
 
-      - name: Generate SHA-256 checksum
+      - name: Create administrator launcher package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $asset = "artifacts/$env:ASSET_NAME"
-          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  $env:ASSET_NAME" | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
-          Get-Item $asset | Format-List Name,Length,LastWriteTime
+
+          $cmd = @'
+          @echo off
+          title LiveAgent Gateway
+          powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Start-LiveAgent-Gateway.ps1"
+          if errorlevel 1 (
+            echo.
+            echo LiveAgent Gateway exited with an error.
+            pause
+          )
+          '@
+          $cmd.TrimStart() | Set-Content "artifacts/Start-LiveAgent-Gateway.cmd" -Encoding ascii
+
+          $ps1 = @'
+          $ErrorActionPreference = "Stop"
+
+          try {
+            $baseDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+            $gatewayExe = Get-ChildItem -Path $baseDir -Filter "liveagent-gateway-*-windows-amd64.exe" -File |
+              Select-Object -First 1
+
+            if (-not $gatewayExe) {
+              throw "Gateway executable was not found in $baseDir"
+            }
+
+            $dataDir = Join-Path $env:LOCALAPPDATA "LiveAgentGateway"
+            $tokenFile = Join-Path $dataDir "gateway-token.txt"
+            New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
+
+            if (-not (Test-Path $tokenFile)) {
+              $tokenBytes = New-Object byte[] 32
+              [Security.Cryptography.RandomNumberGenerator]::Fill($tokenBytes)
+              $token = [Convert]::ToHexString($tokenBytes).ToLowerInvariant()
+              Set-Content -Path $tokenFile -Value $token -Encoding ascii -NoNewline
+            }
+
+            $token = (Get-Content -Path $tokenFile -Raw).Trim()
+            if ([string]::IsNullOrWhiteSpace($token)) {
+              throw "Gateway token file is empty: $tokenFile"
+            }
+
+            $env:LIVEAGENT_GATEWAY_TOKEN = $token
+            $env:LIVEAGENT_GATEWAY_GRPC_ADDR = "127.0.0.1:50051"
+            $env:LIVEAGENT_GATEWAY_HTTP_ADDR = "0.0.0.0:50052"
+
+            try {
+              Set-Clipboard -Value $token
+              $clipboardStatus = "Access Token has been copied to the clipboard."
+            } catch {
+              $clipboardStatus = "Access Token could not be copied automatically. Read it from: $tokenFile"
+            }
+
+            Write-Host ""
+            Write-Host "LiveAgent Gateway is starting..." -ForegroundColor Cyan
+            Write-Host "WebUI:       http://127.0.0.1:50052"
+            Write-Host "LAN WebUI:   http://<company-PC-LAN-IP>:50052"
+            Write-Host "Desktop gRPC: http://127.0.0.1:50051"
+            Write-Host "Token file:  $tokenFile"
+            Write-Host $clipboardStatus -ForegroundColor Green
+            Write-Host "Keep this window open while using remote access." -ForegroundColor Yellow
+            Write-Host ""
+
+            & $gatewayExe.FullName
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              throw "Gateway exited with code $exitCode"
+            }
+          } catch {
+            Write-Host ""
+            Write-Host "LiveAgent Gateway failed to start:" -ForegroundColor Red
+            Write-Host $_.Exception.Message -ForegroundColor Red
+            Write-Host ""
+            Read-Host "Press Enter to close"
+            exit 1
+          }
+          '@
+          $ps1.TrimStart() | Set-Content "artifacts/Start-LiveAgent-Gateway.ps1" -Encoding utf8
+
+          $readme = @'
+          LiveAgent Gateway v1.0.9 - Windows x64
+          =======================================
+
+          IMPORTANT
+          ---------
+          Do not double-click the raw liveagent-gateway EXE by itself. The Gateway requires an
+          Access Token and listening addresses. Without them, it exits immediately by design.
+
+          START
+          -----
+          1. Extract every file from this ZIP into the same folder.
+          2. Double-click Start-LiveAgent-Gateway.cmd.
+          3. Keep the opened console window running.
+          4. The first start generates a persistent token and copies it to the clipboard.
+
+          LIVEAGENT DESKTOP REMOTE SETTINGS
+          ---------------------------------
+          Gateway URL:  http://127.0.0.1:50052
+          gRPC port:    50051
+          gRPC Endpoint: leave blank
+          Access Token: paste the token copied by the launcher
+          Agent ID:     company-desktop-liveagent
+
+          BROWSER ACCESS
+          --------------
+          Local computer: http://127.0.0.1:50052
+          LAN computer:   http://<company-PC-LAN-IP>:50052
+
+          TOKEN STORAGE
+          -------------
+          %LOCALAPPDATA%\LiveAgentGateway\gateway-token.txt
+
+          The token is generated locally on the target computer. It is never embedded in this
+          package or committed to GitHub.
+          '@
+          $readme.TrimStart() | Set-Content "artifacts/README-ADMIN.txt" -Encoding utf8
+
+          $packageFiles = @(
+            "artifacts/$env:ASSET_NAME",
+            "artifacts/Start-LiveAgent-Gateway.cmd",
+            "artifacts/Start-LiveAgent-Gateway.ps1",
+            "artifacts/README-ADMIN.txt"
+          )
+          Compress-Archive -Path $packageFiles -DestinationPath "artifacts/$env:PACKAGE_NAME" -Force
+
+      - name: Generate SHA-256 checksums
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $targets = @(
+            "artifacts/$env:ASSET_NAME",
+            "artifacts/$env:PACKAGE_NAME"
+          )
+          $lines = foreach ($target in $targets) {
+            $hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $(Split-Path $target -Leaf)"
+          }
+          $lines | Set-Content artifacts/SHA256SUMS.txt -Encoding ascii
+          Get-ChildItem artifacts | Format-Table Name,Length,LastWriteTime
           Get-Content artifacts/SHA256SUMS.txt
 
       - name: Upload workflow artifact
@@ -93,16 +228,38 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
+
+          $notes = @'
+          Standalone Windows x64 Gateway built from official Stack-Cairn/LiveAgent v1.0.9 source.
+
+          Recommended download: `LiveAgent-Gateway-v1.0.9-Windows-x64.zip`
+
+          Extract the ZIP and run `Start-LiveAgent-Gateway.cmd`. Do not start the raw Gateway EXE
+          by double-clicking it: the executable requires an Access Token and listening-address
+          configuration, so it exits immediately when launched without parameters.
+
+          The launcher generates a local persistent token, copies it to the clipboard, starts
+          gRPC on `127.0.0.1:50051`, and starts the browser WebUI on `0.0.0.0:50052`.
+          '@
+          $notes.TrimStart() | Set-Content artifacts/RELEASE_NOTES.md -Encoding utf8
+
           gh release view $env:RELEASE_TAG --repo $env:GH_REPO *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $env:RELEASE_TAG `
               --repo $env:GH_REPO `
               --target $env:GITHUB_SHA `
               --title "LiveAgent Gateway v1.0.9 Windows x64" `
-              --notes "Standalone Windows x64 Gateway built from official Stack-Cairn/LiveAgent v1.0.9 source. No Docker, Node.js, Go, or source tree is required on the target computer."
+              --notes-file artifacts/RELEASE_NOTES.md
+          } else {
+            gh release edit $env:RELEASE_TAG `
+              --repo $env:GH_REPO `
+              --title "LiveAgent Gateway v1.0.9 Windows x64" `
+              --notes-file artifacts/RELEASE_NOTES.md
           }
+
           gh release upload $env:RELEASE_TAG `
             "artifacts/$env:ASSET_NAME" `
+            "artifacts/$env:PACKAGE_NAME" `
             "artifacts/SHA256SUMS.txt" `
             --clobber `
             --repo $env:GH_REPO
